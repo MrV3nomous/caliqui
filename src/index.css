@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+@theme {
+  /* Caliqui Design Tokens */
+  --color-background: #f9f9fb;
+  --color-surface: #ffffff;
+  --color-primary: #111111;
+  --color-secondary: #666666;
+  --color-accent: #3b82f6;
+  --color-border: #eaeaea;
+
+  --font-sans: "Inter", system-ui, sans-serif;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-background);
+    color: var(--color-primary);
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    overscroll-behavior-y: none;
+    -webkit-font-smoothing: antialiased;
+  }
+}

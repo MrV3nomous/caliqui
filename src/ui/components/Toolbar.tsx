@@ -24,9 +24,32 @@ export function Toolbar() {
     });
   };
 
+  const handleAddText = () => {
+    const newLayer: LayerNode = {
+      id: crypto.randomUUID(),
+      type: 'text',
+      name: 'Text Layer',
+      visible: true,
+      locked: false,
+      properties: {
+        text: 'Double click to edit',
+        fontSize: 32,
+        fill: '#111111',
+        fontFamily: 'Inter',
+      },
+      transform: { x: 150, y: 150, scaleX: 1, scaleY: 1, rotation: 0 },
+    };
+
+    dispatch({
+      type: 'ADD_LAYER',
+      payload: { layer: newLayer },
+      timestamp: Date.now(),
+    });
+  };
+
   return (
     <aside className="w-16 border-r border-border bg-surface flex flex-col items-center py-4 gap-2 shrink-0">
-      <IconButton title="Add Text" disabled>
+      <IconButton title="Add Text" onClick={handleAddText}>
         <Type size={20} />
       </IconButton>
       <IconButton title="Add Image" disabled>

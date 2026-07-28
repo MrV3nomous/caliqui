@@ -30,6 +30,33 @@ export function PropertiesPanel() {
     });
   };
 
+  const handleTextChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    dispatch({
+      type: 'UPDATE_LAYER',
+      payload: {
+        id: selectedId,
+        updates: {
+          properties: { ...activeLayer.properties, text: e.target.value },
+        },
+      },
+      timestamp: Date.now(),
+    });
+  };
+
+  const handleFontSizeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const fontSize = Number(e.target.value);
+    dispatch({
+      type: 'UPDATE_LAYER',
+      payload: {
+        id: selectedId,
+        updates: {
+          properties: { ...activeLayer.properties, fontSize },
+        },
+      },
+      timestamp: Date.now(),
+    });
+  };
+
   return (
     <aside className="w-64 border-l border-border bg-surface/50 flex flex-col shrink-0">
       <div className="p-3 border-b border-border">
@@ -62,6 +89,47 @@ export function PropertiesPanel() {
               />
             </div>
           </div>
+        )}
+
+        {activeLayer.type === 'text' && (
+          <>
+            <div className="space-y-1.5">
+              <Label htmlFor="text-content">Content</Label>
+              <Input
+                id="text-content"
+                value={(activeLayer.properties.text as string) || ''}
+                onChange={handleTextChange}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="font-size">Font Size (px)</Label>
+              <Input
+                id="font-size"
+                type="number"
+                value={(activeLayer.properties.fontSize as number) || 24}
+                onChange={handleFontSizeChange}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="text-color">Text Color</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="text-color"
+                  type="color"
+                  value={(activeLayer.properties.fill as string) || '#000000'}
+                  onChange={handleColorChange}
+                  className="w-12 p-1 cursor-pointer"
+                />
+                <Input
+                  value={(activeLayer.properties.fill as string) || '#000000'}
+                  onChange={handleColorChange}
+                  className="flex-1 font-mono uppercase text-xs"
+                />
+              </div>
+            </div>
+          </>
         )}
       </div>
     </aside>

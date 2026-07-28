@@ -8,7 +8,6 @@ export function Workspace() {
 
   const document = useEditorStore((state) => state.document);
   const dispatch = useEditorStore((state) => state.dispatch);
-  // NEW: Pull selection action from store
   const setSelectedId = useEditorStore((state) => state.setSelectedId);
 
   useEffect(() => {
@@ -17,7 +16,6 @@ export function Workspace() {
     const adapter = new FabricAdapter();
     adapter.initialize(canvasRef.current);
 
-    // Wire up the Two-Way Binding
     adapter.onTransform = (id, transform) => {
       dispatch({
         type: 'UPDATE_LAYER',
@@ -29,7 +27,22 @@ export function Workspace() {
       });
     };
 
-    // NEW: Wire selection to store
+    adapter.onTextChange = (id, text) => {
+      const activeLayer = useEditorStore.getState().document?.nodes[id];
+      if (!activeLayer) return;
+
+      dispatch({
+        type: 'UPDATE_LAYER',
+        payload: {
+          id,
+          updates: {
+            properties: { ...activeLayer.properties, text },
+          },
+        },
+        timestamp: Date.now(),
+      });
+    };
+
     adapter.onSelect = (id) => {
       setSelectedId(id);
     };

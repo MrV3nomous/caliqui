@@ -1,4 +1,4 @@
-import { Canvas, type FabricObject, Rect } from 'fabric';
+import { Canvas, type FabricObject, IText, Rect } from 'fabric';
 import type { LayerNode, ProjectDocument } from '@/core/document/types';
 
 type EditorFabricObject = FabricObject & { data?: { id: string } };
@@ -7,8 +7,8 @@ export class FabricAdapter {
   private canvas: Canvas | null = null;
 
   public onTransform?: (id: string, transform: LayerNode['transform']) => void;
-  // NEW: Callback for selection
   public onSelect?: (id: string | null) => void;
+  public onTextChange?: (id: string, text: string) => void;
 
   public initialize(canvasElement: HTMLCanvasElement): void {
     this.canvas = new Canvas(canvasElement, {
@@ -20,7 +20,6 @@ export class FabricAdapter {
 
     this.canvas.on('object:modified', (e) => {
       const obj = e.target as EditorFabricObject;
-
       if (!obj?.data?.id || !this.onTransform) return;
 
       this.onTransform(obj.data.id, {
@@ -30,6 +29,14 @@ export class FabricAdapter {
         scaleY: obj.scaleY ?? 1,
         rotation: obj.angle ?? 0,
       });
+    });
+
+    this.canvas.on('text:changed', (e) => {
+      const obj = e.target as EditorFabricObject & { text?: string };
+      if (!obj?.data?.id || !this.onTextChange) return;
+      if (typeof obj.text === 'string') {
+        this.onTextChange(obj.data.id, obj.text);
+      }
     });
 
     const handleSelection = (e: { selected?: FabricObject[] }) => {
@@ -89,9 +96,26 @@ export class FabricAdapter {
       }) as EditorFabricObject;
 
       rect.data = { id: node.id };
-
       this.canvas.add(rect);
       return rect;
+    }
+
+    if (node.type === 'text') {
+      const textObj = new IText((node.properties.text as string) || '', {
+        left: node.transform.x,
+        top: node.transform.y,
+        fontSize: (node.properties.fontSize as number) || 24,
+        fill: (node.properties.fill as string) || '#000000',
+        fontFamily: (node.properties.fontFamily as string) || 'Inter',
+        scaleX: node.transform.scaleX,
+        scaleY: node.transform.scaleY,
+        angle: node.transform.rotation,
+        selectable: !node.locked,
+      }) as EditorFabricObject;
+
+      textObj.data = { id: node.id };
+      this.canvas.add(textObj);
+      return textObj;
     }
 
     return null;

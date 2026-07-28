@@ -1,4 +1,4 @@
-import { Canvas, type FabricObject, IText, Rect } from 'fabric';
+import { Canvas, FabricImage, type FabricObject, IText, Rect } from 'fabric';
 import type { LayerNode, ProjectDocument } from '@/core/document/types';
 
 type EditorFabricObject = FabricObject & { data?: { id: string } };
@@ -116,6 +116,26 @@ export class FabricAdapter {
       textObj.data = { id: node.id };
       this.canvas.add(textObj);
       return textObj;
+    }
+
+    if (node.type === 'image' && node.properties.src) {
+      FabricImage.fromURL(node.properties.src as string).then((img) => {
+        if (!this.canvas) return;
+
+        img.set({
+          left: node.transform.x,
+          top: node.transform.y,
+          scaleX: node.transform.scaleX,
+          scaleY: node.transform.scaleY,
+          angle: node.transform.rotation,
+          selectable: !node.locked,
+        });
+
+        (img as EditorFabricObject).data = { id: node.id };
+        this.canvas.add(img);
+        this.canvas.renderAll();
+      });
+      return null;
     }
 
     return null;

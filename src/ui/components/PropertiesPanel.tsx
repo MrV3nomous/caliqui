@@ -131,6 +131,14 @@ export function PropertiesPanel() {
             </div>
           </>
         )}
+
+        {activeLayer.type === 'image' && (
+          <div className="p-3 bg-background rounded-md border border-border">
+            <span className="text-xs text-secondary block text-center">
+              Image filters and opacity controls will be available in a future update.
+            </span>
+          </div>
+        )}
       </div>
     </aside>
   );

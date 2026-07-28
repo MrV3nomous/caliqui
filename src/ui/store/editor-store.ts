@@ -10,6 +10,9 @@ interface EditorState {
   canUndo: boolean;
   canRedo: boolean;
 
+  selectedId: string | null;
+  setSelectedId: (id: string | null) => void;
+
   init: () => void;
   dispatch: (command: EditorCommand) => void;
   undo: () => void;
@@ -24,6 +27,10 @@ export const useEditorStore = create<EditorState>((set) => ({
   canUndo: false,
   canRedo: false,
 
+  selectedId: null,
+
+  setSelectedId: (id) => set({ selectedId: id }),
+
   init: () => {
     const doc = createEmptyDocument();
     engine.dispatch({ type: 'LOAD_DOCUMENT', payload: { document: doc }, timestamp: Date.now() });
@@ -31,6 +38,7 @@ export const useEditorStore = create<EditorState>((set) => ({
       document: engine.getDocument(),
       canUndo: engine.canUndo(),
       canRedo: engine.canRedo(),
+      selectedId: null,
     });
   },
 

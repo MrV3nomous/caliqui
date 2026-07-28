@@ -7,8 +7,11 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  build: {
+    chunkSizeWarningLimit: 1000,
+  },
   resolve: {
-    tsconfigPaths: true, 
+    tsconfigPaths: true,
   },
   server: {
     port: 5173,

@@ -2,6 +2,7 @@ import { Download, Redo, Undo } from 'lucide-react';
 import { Outlet } from 'react-router';
 import { env } from '@/shared/env';
 import { LayersPanel } from '@/ui/components/LayersPanel';
+import { PropertiesPanel } from '@/ui/components/PropertiesPanel'; // NEW
 import { Toolbar } from '@/ui/components/Toolbar';
 import { Button, IconButton } from '@/ui/design-system';
 import { useEditorStore } from '@/ui/store/editor-store';
@@ -39,6 +40,9 @@ export function EditorLayout() {
         <main className="flex-1 relative bg-background overflow-hidden flex items-center justify-center bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-opacity-5">
           <Outlet />
         </main>
+
+        {/* NEW: Right Sidebar */}
+        <PropertiesPanel />
       </div>
     </div>
   );

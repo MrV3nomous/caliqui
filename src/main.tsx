@@ -1,7 +1,9 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createBrowserRouter, RouterProvider } from 'react-router';
+import { EditorLayout } from '@/ui/layouts/EditorLayout';
 import { RootLayout } from '@/ui/layouts/RootLayout';
+import { Editor } from '@/ui/pages/Editor';
 import { Home } from '@/ui/pages/Home';
 import './index.css';
 
@@ -15,6 +17,16 @@ const router = createBrowserRouter([
       {
         index: true,
         element: <Home />,
+      },
+      {
+        path: 'editor',
+        element: <EditorLayout />,
+        children: [
+          {
+            index: true,
+            element: <Editor />,
+          },
+        ],
       },
     ],
   },

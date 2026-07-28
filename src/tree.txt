@@ -1,0 +1,56 @@
+Folder PATH listing for volume OS
+Volume serial number is 000000C5 2A50:F47A
+C:.
+|   .env.example
+|   index.css
+|   main.tsx
+|   tree.txt
+|   
++---adapters
+|   +---ai
+|   +---persistence
+|   \---rendering
++---core
+|   +---commands
+|   |       types.ts
+|   |       
+|   +---document
+|   |       document-engine.ts
+|   |       factory.ts
+|   |       types.ts
+|   |       
+|   +---engines
+|   \---ports
++---plugins
+|   \---tools
++---shared
+|   +---constants
+|   +---env
+|   |       index.ts
+|   |       
+|   +---types
+|   \---utils
+|           cn.ts
+|           
+\---ui
+    +---design-system
+    |       Button.tsx
+    |       Card.tsx
+    |       FloatingPanel.tsx
+    |       IconButton.tsx
+    |       index.ts
+    |       Input.tsx
+    |       Label.tsx
+    |       Select.tsx
+    |       
+    +---layouts
+    |       EditorLayout.tsx
+    |       RootLayout.tsx
+    |       
+    +---pages
+    |       Editor.tsx
+    |       Home.tsx
+    |       
+    \---store
+            editor-store.ts
+            

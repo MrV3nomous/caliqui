@@ -1,4 +1,5 @@
-import { MousePointer2, Sparkles } from 'lucide-react';
+import { ArrowRight, MousePointer2, Sparkles } from 'lucide-react';
+import { Link } from 'react-router';
 import { env } from '@/shared/env';
 import { Button, Card, FloatingPanel, IconButton, Input, Label, Select } from '@/ui/design-system';
 
@@ -8,6 +9,11 @@ export function Home() {
       <div className="text-center space-y-2">
         <h1 className="text-3xl font-medium tracking-tight text-primary">{env.VITE_APP_NAME}</h1>
         <p className="text-secondary">Sprint 2: Design System Complete.</p>
+        <Link to="/editor">
+          <Button variant="primary" className="gap-2">
+            Launch Editor Workspace <ArrowRight size={16} />
+          </Button>
+        </Link>
       </div>
 
       <Card className="p-8 max-w-2xl w-full flex flex-col md:flex-row gap-12">

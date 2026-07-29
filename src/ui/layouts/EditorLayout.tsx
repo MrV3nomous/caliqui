@@ -1,5 +1,6 @@
-import { Download, Redo, Sparkles, Undo, X } from 'lucide-react';
-import { useEffect } from 'react';
+import { Download, Loader2, Redo, Sparkles, Undo, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import type { LayerNode } from '@/core/document/types';
 import { env } from '@/shared/env';
 import { LayersPanel } from '@/ui/components/LayersPanel';
 import { Preview3D } from '@/ui/components/Preview3D';
@@ -10,12 +11,68 @@ import { Button, IconButton, Input, Label } from '@/ui/design-system';
 import { useEditorStore } from '@/ui/store/editor-store';
 
 export function EditorLayout() {
-  const { canUndo, canRedo, undo, redo, activeMesh, setActiveMesh, init } = useEditorStore();
+  const { canUndo, canRedo, undo, redo, activeMesh, setActiveMesh, init, dispatch } =
+    useEditorStore();
 
-  // Initialize the document when the editor loads
+  // AI State
+  const [prompt, setPrompt] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+
   useEffect(() => {
     init();
   }, [init]);
+
+  const handleGenerate = async () => {
+    if (!activeMesh) {
+      alert('Please select a part of the garment to apply the AI design to.');
+      return;
+    }
+    if (!prompt.trim()) return;
+
+    setIsGenerating(true);
+
+    // MOCK AI API CALL: Simulate a 2-second generation delay
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    // For the skeleton, we use a placeholder image API based on the user's prompt text
+    const encodedPrompt = encodeURIComponent(prompt);
+    // Fetch a real image as a blob so we can convert it to base64 for our engine
+    try {
+      const response = await fetch(
+        `https://api.dicebear.com/7.x/bottts/png?seed=${encodedPrompt}&size=400`,
+      );
+      const blob = await response.blob();
+      const reader = new FileReader();
+
+      reader.onloadend = () => {
+        const base64data = reader.result as string;
+
+        const newLayer: LayerNode = {
+          id: crypto.randomUUID(),
+          type: 'image',
+          name: `AI: ${prompt.slice(0, 15)}...`,
+          visible: true,
+          locked: false,
+          properties: { src: base64data, meshPart: activeMesh, opacity: 1 },
+          // Center it on the 2D canvas
+          transform: { x: 200, y: 200, scaleX: 1, scaleY: 1, rotation: 0 },
+        };
+
+        dispatch({
+          type: 'ADD_LAYER',
+          payload: { layer: newLayer },
+          timestamp: Date.now(),
+        });
+
+        setIsGenerating(false);
+        setPrompt('');
+      };
+      reader.readAsDataURL(blob);
+    } catch (error) {
+      console.error('AI Generation failed', error);
+      setIsGenerating(false);
+    }
+  };
 
   return (
     <div className="w-screen h-screen flex flex-col bg-background font-sans overflow-hidden">
@@ -69,17 +126,37 @@ export function EditorLayout() {
         <PropertiesPanel />
       </div>
 
-      <footer className="h-16 border-t border-border bg-surface flex items-center px-6 gap-6 shrink-0 z-20">
+      <footer className="h-16 border-t border-border bg-surface flex items-center px-6 gap-6 shrink-0 z-20 transition-colors">
         <div className="flex items-center gap-2 shrink-0">
-          <Sparkles size={18} className="text-blue-500" />
+          <Sparkles
+            size={18}
+            className={isGenerating ? 'text-secondary animate-pulse' : 'text-blue-500'}
+          />
           <Label className="text-primary font-medium text-sm">AI Generation</Label>
         </div>
         <Input
-          placeholder="e.g., A futuristic cyberpunk jacket with glowing neon accents..."
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleGenerate();
+          }}
+          placeholder="e.g., A cyberpunk skull graphic..."
           className="flex-1 max-w-3xl bg-background"
+          disabled={isGenerating}
         />
-        <Button variant="primary" className="gap-2">
-          Generate Assets
+        <Button
+          variant="primary"
+          className="gap-2 w-40"
+          onClick={handleGenerate}
+          disabled={isGenerating || !prompt.trim()}
+        >
+          {isGenerating ? (
+            <>
+              <Loader2 size={16} className="animate-spin" /> Generating...
+            </>
+          ) : (
+            'Generate Assets'
+          )}
         </Button>
       </footer>
     </div>

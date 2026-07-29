@@ -1,4 +1,4 @@
-import { Download, Loader2, Redo, Sparkles, Undo, X } from 'lucide-react';
+import { Download, Loader2, LogOut, Redo, Sparkles, Undo, User as UserIcon, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { LayerNode } from '@/core/document/types';
 import { env } from '@/shared/env';
@@ -8,11 +8,14 @@ import { PropertiesPanel } from '@/ui/components/PropertiesPanel';
 import { Toolbar } from '@/ui/components/Toolbar';
 import { Workspace } from '@/ui/components/Workspace';
 import { Button, IconButton, Input, Label } from '@/ui/design-system';
+import { useAuthStore } from '@/ui/store/auth-store';
 import { useEditorStore } from '@/ui/store/editor-store';
 
 export function EditorLayout() {
   const { canUndo, canRedo, undo, redo, activeMesh, setActiveMesh, init, dispatch } =
     useEditorStore();
+
+  const { user, isAuthenticated, openAuthModal, logout } = useAuthStore();
 
   // AI State
   const [prompt, setPrompt] = useState('');
@@ -90,7 +93,24 @@ export function EditorLayout() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          {/* NEW: Auth Controls */}
+          {isAuthenticated ? (
+            <div className="flex items-center gap-2 mr-2">
+              <span className="text-sm text-secondary font-medium">{user?.email}</span>
+              <IconButton size="sm" onClick={logout} title="Sign Out">
+                <LogOut size={16} />
+              </IconButton>
+            </div>
+          ) : (
+            <Button variant="outline" size="sm" className="gap-2 mr-2" onClick={openAuthModal}>
+              <UserIcon size={16} />
+              Sign In
+            </Button>
+          )}
+
+          <div className="h-4 w-px bg-border mr-1" />
+
           <Button variant="primary" size="sm" className="gap-2">
             <Download size={16} />
             Export Mockup

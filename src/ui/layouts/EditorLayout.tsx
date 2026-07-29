@@ -1,4 +1,13 @@
-import { Download, Loader2, LogOut, Redo, Sparkles, Undo, User as UserIcon, X } from 'lucide-react';
+import {
+  Loader2,
+  LogOut,
+  Redo,
+  ShoppingBag,
+  Sparkles,
+  Undo,
+  User as UserIcon,
+  X,
+} from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { LayerNode } from '@/core/document/types';
 import { env } from '@/shared/env';
@@ -9,6 +18,7 @@ import { Toolbar } from '@/ui/components/Toolbar';
 import { Workspace } from '@/ui/components/Workspace';
 import { Button, IconButton, Input, Label } from '@/ui/design-system';
 import { useAuthStore } from '@/ui/store/auth-store';
+import { useCheckoutStore } from '@/ui/store/checkout-store';
 import { useEditorStore } from '@/ui/store/editor-store';
 
 export function EditorLayout() {
@@ -16,10 +26,18 @@ export function EditorLayout() {
     useEditorStore();
 
   const { user, isAuthenticated, openAuthModal, logout } = useAuthStore();
-
+  const { openCheckout } = useCheckoutStore();
   // AI State
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+
+  const handleOrderIntent = () => {
+    if (!isAuthenticated) {
+      openAuthModal();
+    } else {
+      openCheckout();
+    }
+  };
 
   useEffect(() => {
     init();
@@ -111,9 +129,9 @@ export function EditorLayout() {
 
           <div className="h-4 w-px bg-border mr-1" />
 
-          <Button variant="primary" size="sm" className="gap-2">
-            <Download size={16} />
-            Export Mockup
+          <Button variant="primary" size="sm" className="gap-2" onClick={handleOrderIntent}>
+            <ShoppingBag size={16} />
+            Order Custom Apparel
           </Button>
         </div>
       </header>

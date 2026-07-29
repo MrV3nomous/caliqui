@@ -1,5 +1,6 @@
 import { Outlet } from 'react-router';
 import { AuthModal } from '@/ui/components/AuthModal';
+import { CheckoutModal } from '@/ui/components/CheckoutModal'; // NEW
 
 export function RootLayout() {
   return (
@@ -10,6 +11,7 @@ export function RootLayout() {
 
       {/* Global Modals overlay the entire app */}
       <AuthModal />
+      <CheckoutModal />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import {
+  LayoutDashboard,
   Loader2,
   LogOut,
   Redo,
@@ -9,6 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router';
 import type { LayerNode } from '@/core/document/types';
 import { env } from '@/shared/env';
 import { LayersPanel } from '@/ui/components/LayersPanel';
@@ -115,7 +117,17 @@ export function EditorLayout() {
           {/* NEW: Auth Controls */}
           {isAuthenticated ? (
             <div className="flex items-center gap-2 mr-2">
-              <span className="text-sm text-secondary font-medium">{user?.email}</span>
+              <span className="text-sm text-secondary font-medium mr-2 hidden md:block">
+                {user?.email}
+              </span>
+
+              {/* NEW: Link to Dashboard */}
+              <Link to="/dashboard">
+                <IconButton size="sm" title="Dashboard">
+                  <LayoutDashboard size={16} />
+                </IconButton>
+              </Link>
+
               <IconButton size="sm" onClick={logout} title="Sign Out">
                 <LogOut size={16} />
               </IconButton>

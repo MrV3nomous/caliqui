@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { createBrowserRouter, RouterProvider } from 'react-router';
 import { EditorLayout } from '@/ui/layouts/EditorLayout';
 import { RootLayout } from '@/ui/layouts/RootLayout';
+import { Dashboard } from '@/ui/pages/Dashboard';
 import { Editor } from '@/ui/pages/Editor';
 import { Home } from '@/ui/pages/Home';
 import './index.css';
@@ -27,6 +28,10 @@ const router = createBrowserRouter([
             element: <Editor />,
           },
         ],
+      },
+      {
+        path: 'dashboard',
+        element: <Dashboard />,
       },
     ],
   },

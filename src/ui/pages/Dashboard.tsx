@@ -1,4 +1,4 @@
-import { Image as ImageIcon, LogOut, Package, Settings } from 'lucide-react';
+import { Image as ImageIcon, LogOut, Package, Settings, Store } from 'lucide-react';
 import { Link, Navigate } from 'react-router';
 import { env } from '@/shared/env';
 import { Button, Card } from '@/ui/design-system';
@@ -47,6 +47,17 @@ export function Dashboard() {
           >
             <Settings size={18} /> Settings
           </button>
+
+          {/* NEW: Explore Section */}
+          <div className="text-xs font-semibold uppercase tracking-wider text-secondary mb-4 px-2 mt-6 border-t border-border pt-4">
+            Explore
+          </div>
+          <Link
+            to="/marketplace"
+            className="w-full flex items-center gap-3 px-3 py-2 text-secondary hover:bg-background hover:text-primary rounded-md font-medium text-sm transition-colors"
+          >
+            <Store size={18} /> Marketplace
+          </Link>
         </div>
 
         <div className="p-4 border-t border-border">

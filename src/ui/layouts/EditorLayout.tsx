@@ -5,6 +5,7 @@ import {
   Redo,
   ShoppingBag,
   Sparkles,
+  Store,
   Undo,
   User as UserIcon,
   X,
@@ -114,14 +115,22 @@ export function EditorLayout() {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* NEW: Auth Controls */}
+          {/* NEW: Link to Marketplace */}
+          <Link to="/marketplace">
+            <Button variant="outline" size="sm" className="gap-2 hidden md:flex">
+              <Store size={16} /> Explore
+            </Button>
+          </Link>
+
+          <div className="h-4 w-px bg-border hidden md:block" />
+
+          {/* Auth Controls */}
           {isAuthenticated ? (
             <div className="flex items-center gap-2 mr-2">
               <span className="text-sm text-secondary font-medium mr-2 hidden md:block">
                 {user?.email}
               </span>
 
-              {/* NEW: Link to Dashboard */}
               <Link to="/dashboard">
                 <IconButton size="sm" title="Dashboard">
                   <LayoutDashboard size={16} />

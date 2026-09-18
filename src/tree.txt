@@ -1,5 +1,5 @@
 Folder PATH listing for volume OS
-Volume serial number is 000000C5 2A50:F47A
+Volume serial number is 00000098 2A50:F47A
 C:.
 |   .env.example
 |   index.css
@@ -10,6 +10,12 @@ C:.
 |   +---ai
 |   +---persistence
 |   \---rendering
+|           FabricAdapter.ts
+|           
++---assets
+|   \---models
+|           tshirtman1.glb
+|           
 +---core
 |   +---commands
 |   |       types.ts
@@ -28,11 +34,39 @@ C:.
 |   +---env
 |   |       index.ts
 |   |       
+|   +---lib
+|   |       supabase.ts
+|   |       
 |   +---types
 |   \---utils
+|           ai-engine.ts
+|           asset-db.ts
+|           brush-engine.ts
 |           cn.ts
+|           image-processing.ts
 |           
 \---ui
+    +---components
+    |   |   AuthModal.tsx
+    |   |   CheckoutModal.tsx
+    |   |   ContextMenu.tsx
+    |   |   DrawingWorkspace.tsx
+    |   |   LayersPanel.tsx
+    |   |   Preview3D.tsx
+    |   |   PropertiesPanel.tsx
+    |   |   Toolbar.tsx
+    |   |   Workspace.tsx
+    |   |   
+    |   +---preview3d
+    |   |       MarqueeEngine.tsx
+    |   |       ProjectedDecal.tsx
+    |   |       SmartHandle.tsx
+    |   |       TShirtModel.tsx
+    |   |       types.ts
+    |   |       
+    |   \---properties
+    |           config.tsx
+    |           
     +---design-system
     |       Button.tsx
     |       Card.tsx
@@ -43,14 +77,21 @@ C:.
     |       Label.tsx
     |       Select.tsx
     |       
+    +---hooks
+    |       useKeyboardShortcuts.ts
+    |       
     +---layouts
     |       EditorLayout.tsx
     |       RootLayout.tsx
     |       
     +---pages
+    |       Dashboard.tsx
     |       Editor.tsx
     |       Home.tsx
+    |       Marketplace.tsx
     |       
     \---store
+            auth-store.ts
+            checkout-store.ts
             editor-store.ts
             

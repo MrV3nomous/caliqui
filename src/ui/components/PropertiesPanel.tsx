@@ -1,193 +1,410 @@
-import { Input, Label, Select } from '@/ui/design-system';
-import { useEditorStore } from '@/ui/store/editor-store';
+import { Loader2, RotateCcw, Sparkles } from 'lucide-react';
+import type React from 'react';
+import { useState } from 'react';
+import { Label } from '@/ui/design-system';
+import {
+  applyImageFilters,
+  type DecalData,
+  generateAssetTexture,
+  getDefaultConfig,
+  useEditorStore,
+} from '@/ui/store/editor-store';
+import { type PropertyDef, TOOL_CONFIG_MAP } from './properties/config';
 
-export function PropertiesPanel() {
-  const document = useEditorStore((state) => state.document);
-  const selectedId = useEditorStore((state) => state.selectedId);
-  const dispatch = useEditorStore((state) => state.dispatch);
+// --- SUB-COMPONENTS FOR BULLETPROOF LOCAL STATE ---
 
-  if (!document || !selectedId) {
-    return (
-      <aside className="w-64 border-l border-border bg-surface/50 flex flex-col shrink-0 p-4 items-center justify-center text-center">
-        <span className="text-sm text-secondary">No layer selected</span>
-      </aside>
-    );
+function SliderControl({
+  prop,
+  activeDecal,
+  updateVisuals,
+  saveHistory,
+}: {
+  prop: PropertyDef;
+  activeDecal: DecalData;
+  updateVisuals: (updates: Partial<DecalData>) => void;
+  saveHistory: () => void;
+}) {
+  const isRotation = prop.id === 'rotationOffset';
+  const isScale = prop.id === 'scale';
+
+  const rawValue = isScale
+    ? (activeDecal.scaleX ?? activeDecal.scale)
+    : activeDecal[prop.id as keyof DecalData];
+
+  // Safely fallback to 0 or prop.min if undefined, preventing NaN bugs
+  const effectiveValue = typeof rawValue === 'number' ? rawValue : (prop.min ?? 0);
+
+  let calculatedDisplay = 0;
+  if (isRotation) {
+    calculatedDisplay = Math.round(effectiveValue * (180 / Math.PI));
+  } else if (isScale) {
+    calculatedDisplay = Math.round(effectiveValue * 100);
+  } else {
+    calculatedDisplay = Number(Number(effectiveValue).toFixed(2));
   }
 
-  const activeLayer = document.nodes[selectedId];
-  if (!activeLayer) return null;
+  const [localText, setLocalText] = useState<string>(String(calculatedDisplay));
+  const [isFocused, setIsFocused] = useState(false);
 
-  const handleColorChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    dispatch({
-      type: 'UPDATE_LAYER',
-      payload: {
-        id: selectedId,
-        updates: {
-          properties: { ...activeLayer.properties, fill: e.target.value },
-        },
-      },
-      timestamp: Date.now(),
-    });
+  const commitValue = (valStr: string) => {
+    let num = Number(valStr);
+    if (Number.isNaN(num)) return;
+
+    if (prop.min !== undefined) num = Math.max(prop.min, num);
+    if (prop.max !== undefined) num = Math.min(prop.max, num);
+
+    let storeNum = num;
+    if (isRotation) storeNum = num * (Math.PI / 180);
+    else if (isScale) storeNum = num / 100;
+
+    const updates: Partial<DecalData> = { [prop.id]: storeNum };
+    if (isScale) {
+      updates.scaleX = undefined;
+      updates.scaleY = undefined;
+    }
+    updateVisuals(updates);
   };
 
-  const handleTextChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    dispatch({
-      type: 'UPDATE_LAYER',
-      payload: {
-        id: selectedId,
-        updates: {
-          properties: { ...activeLayer.properties, text: e.target.value },
-        },
-      },
-      timestamp: Date.now(),
-    });
-  };
+  const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const num = Number(e.target.value);
 
-  const handleFontSizeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const fontSize = Number(e.target.value);
-    dispatch({
-      type: 'UPDATE_LAYER',
-      payload: {
-        id: selectedId,
-        updates: {
-          properties: { ...activeLayer.properties, fontSize },
-        },
-      },
-      timestamp: Date.now(),
-    });
-  };
+    let storeNum = num;
+    if (isRotation) storeNum = num * (Math.PI / 180);
+    else if (isScale) storeNum = num / 100;
 
-  const handleOpacityChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const opacity = Number(e.target.value);
-    dispatch({
-      type: 'UPDATE_LAYER',
-      payload: {
-        id: selectedId,
-        updates: {
-          properties: { ...activeLayer.properties, opacity },
-        },
-      },
-      timestamp: Date.now(),
-    });
+    const updates: Partial<DecalData> = { [prop.id]: storeNum };
+    if (isScale) {
+      updates.scaleX = undefined;
+      updates.scaleY = undefined;
+    }
+    updateVisuals(updates);
   };
 
   return (
-    <aside className="w-64 border-l border-border bg-surface/50 flex flex-col shrink-0 overflow-y-auto">
-      <div className="p-3 border-b border-border">
-        <span className="text-xs font-semibold uppercase tracking-wider text-secondary">
-          Properties
-        </span>
+    <div className="space-y-2 min-w-0" key={prop.id}>
+      <div className="flex justify-between items-center">
+        <Label className="text-[10px] font-extrabold text-neutral-400 uppercase tracking-widest block m-0">
+          {prop.label}
+        </Label>
       </div>
-
-      <div className="p-4 space-y-6">
-        {/* Core Properties (Always Visible) */}
-        <div className="space-y-4 border-b border-border pb-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="layer-name">Layer Name</Label>
-            <Input id="layer-name" value={activeLayer.name} disabled className="bg-background" />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="opacity">Opacity</Label>
-            <div className="flex gap-2 items-center">
-              <input
-                type="range"
-                id="opacity"
-                min="0"
-                max="1"
-                step="0.01"
-                value={(activeLayer.properties.opacity as number) ?? 1}
-                onChange={handleOpacityChange}
-                className="flex-1"
-              />
-              <span className="text-xs text-secondary w-8 text-right font-mono">
-                {Math.round(((activeLayer.properties.opacity as number) ?? 1) * 100)}%
-              </span>
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="blend-mode">Blend Mode</Label>
-            <Select id="blend-mode" disabled>
-              <option>Normal</option>
-              <option>Multiply</option>
-              <option>Overlay</option>
-            </Select>
-          </div>
+      <div className="flex gap-3 items-center bg-black/5 p-1.5 rounded-2xl">
+        <input
+          type="range"
+          min={prop.min}
+          max={prop.max}
+          step={prop.step ?? 1}
+          value={calculatedDisplay}
+          onPointerDown={() => saveHistory()}
+          onChange={handleSliderChange}
+          className="flex-1 accent-black h-1.5 bg-black/10 rounded-full appearance-none ml-2 cursor-pointer"
+        />
+        <div className="flex items-center justify-end w-14 shrink-0 bg-white rounded-xl px-2 py-1 shadow-sm">
+          <input
+            type="text"
+            value={isFocused ? localText : calculatedDisplay}
+            onFocus={() => {
+              setLocalText(String(calculatedDisplay));
+              setIsFocused(true);
+              saveHistory();
+            }}
+            onChange={(e) => setLocalText(e.target.value)}
+            onBlur={(e) => {
+              setIsFocused(false);
+              commitValue(e.target.value);
+            }}
+            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+            className="w-full bg-transparent text-[11px] font-bold text-center font-mono outline-none text-black"
+          />
         </div>
-
-        {/* Shape Specific */}
-        {activeLayer.type === 'shape' && (
-          <div className="space-y-1.5">
-            <Label htmlFor="fill-color">Fill Color</Label>
-            <div className="flex gap-2">
-              <Input
-                id="fill-color"
-                type="color"
-                value={(activeLayer.properties.fill as string) || '#000000'}
-                onChange={handleColorChange}
-                className="w-12 p-1 cursor-pointer"
-              />
-              <Input
-                value={(activeLayer.properties.fill as string) || '#000000'}
-                onChange={handleColorChange}
-                className="flex-1 font-mono uppercase text-xs"
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Text Specific */}
-        {activeLayer.type === 'text' && (
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="text-content">Content</Label>
-              <Input
-                id="text-content"
-                value={(activeLayer.properties.text as string) || ''}
-                onChange={handleTextChange}
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="font-size">Font Size (px)</Label>
-              <Input
-                id="font-size"
-                type="number"
-                value={(activeLayer.properties.fontSize as number) || 24}
-                onChange={handleFontSizeChange}
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="text-color">Text Color</Label>
-              <div className="flex gap-2">
-                <Input
-                  id="text-color"
-                  type="color"
-                  value={(activeLayer.properties.fill as string) || '#000000'}
-                  onChange={handleColorChange}
-                  className="w-12 p-1 cursor-pointer"
-                />
-                <Input
-                  value={(activeLayer.properties.fill as string) || '#000000'}
-                  onChange={handleColorChange}
-                  className="flex-1 font-mono uppercase text-xs"
-                />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Image Specific */}
-        {activeLayer.type === 'image' && (
-          <div className="p-3 bg-background rounded-md border border-border">
-            <span className="text-xs text-secondary block text-center">
-              Image filters will be available in a future update.
-            </span>
-          </div>
-        )}
       </div>
-    </aside>
+    </div>
+  );
+}
+
+function ColorControl({
+  prop,
+  activeDecal,
+  updateVisuals,
+  saveHistory,
+}: {
+  prop: PropertyDef;
+  activeDecal: DecalData;
+  updateVisuals: (updates: Partial<DecalData>) => void;
+  saveHistory: () => void;
+}) {
+  const value = (activeDecal[prop.id as keyof DecalData] as string) || '';
+  const safeColorValue = value === 'transparent' || !value ? '#000000' : value;
+  const storeDisplayValue = value === 'transparent' ? 'TRANSPARENT' : safeColorValue;
+
+  const [localText, setLocalText] = useState(storeDisplayValue);
+  const [isFocused, setIsFocused] = useState(false);
+
+  return (
+    <div className="space-y-2 min-w-0" key={prop.id}>
+      <Label className="text-[10px] font-extrabold text-neutral-400 uppercase tracking-widest block m-0">
+        {prop.label}
+      </Label>
+      <div className="flex gap-2 p-1.5 bg-black/5 rounded-2xl items-center">
+        <input
+          type="color"
+          value={safeColorValue}
+          onPointerDown={() => saveHistory()}
+          onChange={(e) => updateVisuals({ [prop.id]: e.target.value })}
+          className="w-8 h-8 rounded-xl cursor-pointer p-0 border-0 shrink-0 bg-transparent"
+        />
+        <input
+          type="text"
+          value={isFocused ? localText : storeDisplayValue}
+          onFocus={() => {
+            setLocalText(storeDisplayValue);
+            setIsFocused(true);
+            saveHistory();
+          }}
+          onChange={(e) => setLocalText(e.target.value)}
+          onBlur={() => {
+            setIsFocused(false);
+            let finalColor = localText.trim();
+            if (finalColor.toLowerCase() === 'transparent') {
+              updateVisuals({ [prop.id]: 'transparent' });
+              return;
+            }
+            const ctx = document.createElement('canvas').getContext('2d');
+            if (ctx && finalColor) {
+              ctx.fillStyle = finalColor;
+              finalColor = ctx.fillStyle;
+            }
+            if (finalColor !== value) updateVisuals({ [prop.id]: finalColor });
+          }}
+          onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+          className="flex-1 font-mono uppercase text-[11px] font-bold bg-transparent border-0 text-black px-2 outline-none"
+        />
+      </div>
+    </div>
+  );
+}
+
+function TextControl({
+  prop,
+  activeDecal,
+  updateVisuals,
+  saveHistory,
+}: {
+  prop: PropertyDef;
+  activeDecal: DecalData;
+  updateVisuals: (updates: Partial<DecalData>) => void;
+  saveHistory: () => void;
+}) {
+  const value = (activeDecal[prop.id as keyof DecalData] as string) || '';
+  const [localText, setLocalText] = useState(value);
+  const [isFocused, setIsFocused] = useState(false);
+
+  return (
+    <div className="space-y-2 min-w-0" key={prop.id}>
+      <Label className="text-[10px] font-extrabold text-neutral-400 uppercase tracking-widest block m-0">
+        {prop.label}
+      </Label>
+      <div className="bg-black/5 p-1 rounded-2xl">
+        <input
+          type="text"
+          value={isFocused ? localText : value}
+          onFocus={() => {
+            setLocalText(value);
+            setIsFocused(true);
+            saveHistory();
+          }}
+          onChange={(e) => setLocalText(e.target.value)}
+          onBlur={() => {
+            setIsFocused(false);
+            if (localText !== value) updateVisuals({ [prop.id]: localText });
+          }}
+          onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+          className="w-full bg-white border-0 rounded-xl text-xs font-bold text-black p-2.5 focus:ring-0 outline-none shadow-sm"
+        />
+      </div>
+    </div>
+  );
+}
+
+// --- MAIN PANEL COMPONENT ---
+
+export function PropertiesPanel({ activeDecalId }: { activeDecalId: string }) {
+  const { decals, updateDecal, saveHistory, applyBackgroundRemoval, isProcessingBgRemoval } =
+    useEditorStore();
+
+  const activeDecal = decals.find((d) => d.id === activeDecalId);
+  if (!activeDecal) return null;
+
+  const defaults = getDefaultConfig(activeDecal.type);
+  const isImageOrDrawing = activeDecal.type === 'image' || activeDecal.type === 'drawing';
+
+  const updateVisuals = async (updates: Partial<DecalData>) => {
+    // 1. Immediately apply the update synchronously so sliders don't lag
+    updateDecal(activeDecalId, updates);
+
+    // 2. Check if we actually need to do the heavy 2D Canvas redraw
+    // Size, Position, and Rotation do not require redrawing the texture pixels!
+    const nonRedrawProps = ['position', 'rotation', 'scale', 'scaleX', 'scaleY', 'rotationOffset'];
+    const needsRedraw = Object.keys(updates).some((key) => !nonRedrawProps.includes(key));
+    if (!needsRedraw) return;
+
+    // 3. Process heavy texture regeneration asynchronously
+    const decal = useEditorStore.getState().decals.find((d) => d.id === activeDecalId);
+    if (!decal) return;
+
+    const updatedDecal = { ...decal, ...updates };
+
+    if (updatedDecal.type === 'image' || updatedDecal.type === 'drawing') {
+      const { src: newSrc, aspectRatio } = await applyImageFilters(updatedDecal);
+      updateDecal(activeDecalId, { src: newSrc, aspectRatio });
+    } else {
+      const baseSrc = generateAssetTexture(updatedDecal);
+      const { src: finalSrc, aspectRatio } = await applyImageFilters({
+        ...updatedDecal,
+        originalSrc: baseSrc,
+      });
+      updateDecal(activeDecalId, { src: finalSrc, aspectRatio });
+    }
+  };
+
+  const renderControl = (prop: PropertyDef) => {
+    const value = (activeDecal[prop.id as keyof DecalData] as unknown as string | number) ?? '';
+
+    switch (prop.type) {
+      case 'slider':
+        return (
+          <SliderControl
+            key={prop.id}
+            prop={prop}
+            activeDecal={activeDecal}
+            updateVisuals={updateVisuals}
+            saveHistory={saveHistory}
+          />
+        );
+      case 'color':
+        return (
+          <ColorControl
+            key={prop.id}
+            prop={prop}
+            activeDecal={activeDecal}
+            updateVisuals={updateVisuals}
+            saveHistory={saveHistory}
+          />
+        );
+      case 'text':
+        return (
+          <TextControl
+            key={prop.id}
+            prop={prop}
+            activeDecal={activeDecal}
+            updateVisuals={updateVisuals}
+            saveHistory={saveHistory}
+          />
+        );
+      case 'select':
+        return (
+          <div className="space-y-2 min-w-0" key={prop.id}>
+            <Label className="text-[10px] font-extrabold text-neutral-400 uppercase tracking-widest block m-0">
+              {prop.label}
+            </Label>
+            <div className="bg-black/5 p-1 rounded-2xl">
+              <select
+                className="w-full bg-white border-0 rounded-xl text-xs font-bold text-black p-2.5 focus:ring-0 outline-none shadow-sm cursor-pointer"
+                value={value}
+                onFocus={() => saveHistory()}
+                onChange={(e) => updateVisuals({ [prop.id]: e.target.value })}
+                style={prop.id === 'fontFamily' ? { fontFamily: String(value) } : undefined}
+              >
+                {prop.options?.map((opt) => (
+                  <option
+                    key={opt.value}
+                    value={opt.value}
+                    style={prop.id === 'fontFamily' ? { fontFamily: String(opt.value) } : undefined}
+                  >
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        );
+      case 'button-group':
+        return (
+          <div className="space-y-2 min-w-0" key={prop.id}>
+            <Label className="text-[10px] font-extrabold text-neutral-400 uppercase tracking-widest block m-0">
+              {prop.label}
+            </Label>
+            <div className="flex bg-black/5 p-1 rounded-2xl justify-between gap-1 overflow-hidden">
+              {prop.options?.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={`flex-1 flex justify-center items-center text-[11px] py-2 rounded-xl transition-all min-w-0 ${
+                    value === opt.value
+                      ? 'bg-white shadow-sm text-black font-extrabold'
+                      : 'text-neutral-500 hover:text-black font-semibold'
+                  }`}
+                  onClick={() => {
+                    saveHistory();
+                    updateVisuals({ [prop.id]: opt.value });
+                  }}
+                >
+                  {opt.icon ? opt.icon : <span className="truncate">{opt.label}</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
+  const activeConfigGroups = TOOL_CONFIG_MAP[activeDecal.type] || [];
+
+  return (
+    <div className="flex flex-col gap-6 pt-2 pb-2">
+      {isImageOrDrawing && (
+        <button
+          type="button"
+          onClick={() => applyBackgroundRemoval(activeDecalId)}
+          disabled={isProcessingBgRemoval}
+          className="w-full flex items-center justify-center gap-2 bg-gradient-to-tr from-indigo-50 to-purple-50 hover:from-indigo-100 hover:to-purple-100 border border-purple-200 disabled:opacity-50 text-purple-700 rounded-2xl p-3 text-xs font-bold transition-all shadow-sm"
+        >
+          {isProcessingBgRemoval ? (
+            <>
+              <Loader2 className="animate-spin" size={14} /> Removing...
+            </>
+          ) : (
+            <>
+              <Sparkles size={14} /> Remove Background
+            </>
+          )}
+        </button>
+      )}
+
+      {activeConfigGroups.map((group) => (
+        <div key={group.id} className="space-y-3 min-w-0">
+          <div className="flex items-center justify-between pr-1">
+            <h4 className="text-[9px] font-extrabold text-neutral-400 uppercase tracking-widest pl-1">
+              {group.title}
+            </h4>
+            <button
+              type="button"
+              onClick={() => {
+                saveHistory();
+                group.properties.forEach((p) => {
+                  updateVisuals({ [p.id]: defaults[p.id as keyof DecalData] });
+                });
+              }}
+              className="text-neutral-400 hover:text-black transition-colors"
+              title="Reset Section"
+            >
+              <RotateCcw size={12} />
+            </button>
+          </div>
+          <div className="space-y-5">{group.properties.map(renderControl)}</div>
+        </div>
+      ))}
+    </div>
   );
 }

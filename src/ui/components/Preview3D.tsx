@@ -1,85 +1,146 @@
-import { ContactShadows, Environment, OrbitControls, useGLTF } from '@react-three/drei';
-import { Canvas, type ThreeEvent } from '@react-three/fiber';
-import { useEffect, useMemo } from 'react';
+import { ContactShadows, Environment, OrbitControls } from '@react-three/drei';
+import { Canvas, useFrame } from '@react-three/fiber';
+import { Hand, MousePointer2 } from 'lucide-react';
+import React, { useRef } from 'react';
 import * as THREE from 'three';
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { useEditorStore } from '@/ui/store/editor-store';
+import { MarqueeEngine } from './preview3d/MarqueeEngine';
+import { TShirtModel } from './preview3d/TShirtModel';
 
-function TShirtModel() {
-  // Load the exact asset path you provided
-  const { scene } = useGLTF('/src/assets/models/tshirtman1.glb');
-  const setActiveMesh = useEditorStore((state) => state.setActiveMesh);
-  const textures = useEditorStore((state) => state.textures);
+const CAMERA_POSITIONS = {
+  front: new THREE.Spherical(4.5, Math.PI / 2, 0),
+  back: new THREE.Spherical(4.5, Math.PI / 2, Math.PI),
+  left: new THREE.Spherical(4.5, Math.PI / 2, -Math.PI / 2),
+  right: new THREE.Spherical(4.5, Math.PI / 2, Math.PI / 2),
+  top: new THREE.Spherical(4.5, Math.PI / 4, 0),
+};
 
-  // Clone the scene so we don't mutate the globally cached asset
-  const copiedScene = useMemo(() => scene.clone(), [scene]);
+function CameraAnimator({
+  controlsRef,
+}: {
+  controlsRef: React.RefObject<OrbitControlsImpl | null>;
+}) {
+  const cameraView = useEditorStore((state) => state.cameraView);
+  const setCameraView = useEditorStore((state) => state.setCameraView);
 
-  // Whenever the 2D textures in the store update, re-apply them to the 3D material
-  useEffect(() => {
-    copiedScene.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
+  useFrame(() => {
+    if (!controlsRef.current || cameraView === 'custom') return;
+    const targetSpherical = CAMERA_POSITIONS[cameraView];
+    if (!targetSpherical) return;
 
-        // If we have a Fabric.js 2D canvas export for this specific mesh part
-        if (textures[child.name]) {
-          const loader = new THREE.TextureLoader();
-          loader.load(textures[child.name], (texture) => {
-            // GLTF models require UVs to be flipped on the Y axis
-            texture.flipY = false;
-            texture.colorSpace = THREE.SRGBColorSpace;
+    controlsRef.current.setAzimuthalAngle(
+      THREE.MathUtils.lerp(controlsRef.current.getAzimuthalAngle(), targetSpherical.theta, 0.1),
+    );
+    controlsRef.current.setPolarAngle(
+      THREE.MathUtils.lerp(controlsRef.current.getPolarAngle(), targetSpherical.phi, 0.1),
+    );
+    controlsRef.current.update();
 
-            if (child.material) {
-              // Clone the material so parts don't accidentally share the same texture
-              child.material = child.material.clone();
-              child.material.map = texture;
-              child.material.needsUpdate = true;
-            }
-          });
-        }
-      }
-    });
-  }, [copiedScene, textures]);
+    const azDiff = Math.abs(controlsRef.current.getAzimuthalAngle() - targetSpherical.theta);
+    const polDiff = Math.abs(controlsRef.current.getPolarAngle() - targetSpherical.phi);
+
+    if (azDiff < 0.01 && polDiff < 0.01) setCameraView('custom');
+  });
+  return null;
+}
+
+function ViewControls() {
+  const globalToolMode = useEditorStore((state) => state.globalToolMode);
+  const setGlobalToolMode = useEditorStore((state) => state.setGlobalToolMode);
+  const setSelectedId = useEditorStore((state) => state.setSelectedId);
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: R3F primitives are canvas elements, not DOM
-    <primitive
-      object={copiedScene}
-      scale={2} // Sketchfab models are often small; scale it up
-      position={[0, -1, 0]}
-      onClick={(e: ThreeEvent<MouseEvent>) => {
-        e.stopPropagation(); // Prevent clicking through to the back of the shirt
-        if (e.object.name) {
-          setActiveMesh(e.object.name);
-        }
-      }}
-      onPointerOver={(e: ThreeEvent<PointerEvent>) => {
-        e.stopPropagation();
-        document.body.style.cursor = 'crosshair';
-      }}
-      onPointerOut={(e: ThreeEvent<PointerEvent>) => {
-        e.stopPropagation();
-        document.body.style.cursor = 'default';
-      }}
-    />
+    <div className="absolute top-20 lg:top-24 left-4 lg:left-8 z-20 flex p-1 bg-white/90 backdrop-blur-3xl shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-black/5 rounded-full pointer-events-auto">
+      <button
+        type="button"
+        onClick={() => setGlobalToolMode('default')}
+        className={`flex items-center gap-1.5 px-5 py-2 rounded-full text-[11px] font-bold transition-all duration-300 ${globalToolMode !== 'camera' ? 'bg-black text-white shadow-md' : 'text-neutral-500 hover:text-black hover:bg-black/5'}`}
+      >
+        <MousePointer2 size={14} /> <span className="hidden sm:inline">Edit</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          setGlobalToolMode('camera');
+          setSelectedId(null);
+        }}
+        className={`flex items-center gap-1.5 px-5 py-2 rounded-full text-[11px] font-bold transition-all duration-300 ${globalToolMode === 'camera' ? 'bg-black text-white shadow-md' : 'text-neutral-500 hover:text-black hover:bg-black/5'}`}
+      >
+        <Hand size={14} /> <span className="hidden sm:inline">Move</span>
+      </button>
+    </div>
   );
 }
 
 export function Preview3D() {
+  const { isDragging, setIsDragging, isDrawingMode, globalToolMode, setCameraView } =
+    useEditorStore();
+  const controlsRef = useRef<OrbitControlsImpl>(null);
+
   return (
-    <div className="w-full h-full bg-neutral-100 relative">
-      <Canvas camera={{ position: [0, 0, 5], fov: 45 }}>
-        <ambientLight intensity={0.6} />
-        <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} intensity={1} castShadow />
-        <Environment preset="city" />
+    <div className="absolute inset-0 w-full h-full touch-none bg-transparent pointer-events-none">
+      <ViewControls />
 
-        <TShirtModel />
+      {/* Enable pointer events ONLY on the canvas */}
+      <div className="absolute inset-0 pointer-events-auto">
+        <Canvas
+          id="tshirt-canvas"
+          dpr={[1, 1.5]}
+          gl={{ preserveDrawingBuffer: true, powerPreference: 'high-performance', alpha: true }}
+          camera={{ position: [0, 0, 4.5], fov: 45 }}
+          onPointerDown={() => setCameraView('custom')}
+          onPointerUp={() => {
+            setIsDragging(false);
+            document.body.style.cursor = 'default';
+          }}
+          onPointerMissed={(e) => {
+            if (e.type === 'pointerup' || e.type === 'pointermove') return;
+            const state = useEditorStore.getState();
+            if (!state.isDragging && state.autoSelect && state.globalToolMode !== 'select') {
+              state.setSelectedId(null);
+              state.setContextMenu(null);
+            }
+          }}
+        >
+          <ambientLight intensity={0.6} />
+          <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} intensity={1} castShadow />
+          <Environment preset="city" />
 
-        <ContactShadows position={[0, -1.5, 0]} opacity={0.5} scale={10} blur={2} far={4} />
-        <OrbitControls makeDefault minPolarAngle={Math.PI / 4} maxPolarAngle={Math.PI / 1.5} />
-      </Canvas>
+          <React.Suspense fallback={null}>
+            <TShirtModel />
+          </React.Suspense>
 
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-surface/80 backdrop-blur-sm border border-border px-4 py-2 rounded-full text-xs font-semibold tracking-wider text-secondary shadow-sm pointer-events-none z-10">
-        Click any part of the 3D model to edit its UV map
+          <ContactShadows
+            position={[0, -1.0, 0]}
+            opacity={0.2}
+            scale={10}
+            blur={2.5}
+            far={4}
+            color="#000000"
+          />
+          <MarqueeEngine />
+          <CameraAnimator controlsRef={controlsRef} />
+
+          <OrbitControls
+            ref={controlsRef}
+            makeDefault
+            minPolarAngle={0}
+            maxPolarAngle={Math.PI}
+            enablePan={true}
+            enableZoom={true}
+            mouseButtons={{
+              LEFT: THREE.MOUSE.ROTATE,
+              MIDDLE: THREE.MOUSE.DOLLY,
+              RIGHT: THREE.MOUSE.PAN,
+            }}
+            enabled={
+              !isDragging &&
+              !isDrawingMode &&
+              (globalToolMode === 'default' || globalToolMode === 'camera')
+            }
+          />
+        </Canvas>
       </div>
     </div>
   );

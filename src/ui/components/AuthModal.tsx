@@ -10,8 +10,8 @@ export function AuthModal() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
-  // If the modal isn't supposed to be open, render nothing
   if (!isAuthModalOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -19,19 +19,26 @@ export function AuthModal() {
     if (!email.trim() || !password.trim()) return;
 
     setIsLoading(true);
-    // Call the mock login function from our store
-    await login(email);
+    setErrorMsg('');
 
-    // Reset local state once finished
-    setIsLoading(false);
-    setEmail('');
-    setPassword('');
+    try {
+      await login(email, password);
+      setEmail('');
+      setPassword('');
+    } catch (error: unknown) {
+      if (error instanceof Error) {
+        setErrorMsg(error.message);
+      } else {
+        setErrorMsg('Failed to authenticate');
+      }
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-surface border border-border rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
-        {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-border">
           <h2 className="text-lg font-semibold text-primary">Sign In to {env.VITE_APP_NAME}</h2>
           <IconButton onClick={closeAuthModal} title="Close">
@@ -39,7 +46,6 @@ export function AuthModal() {
           </IconButton>
         </div>
 
-        {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
           <div className="space-y-1.5">
             <Label htmlFor="email">Email Address</Label>
@@ -75,6 +81,12 @@ export function AuthModal() {
             </div>
           </div>
 
+          {errorMsg && (
+            <div className="text-sm text-red-500 font-medium bg-red-500/10 p-3 rounded-md">
+              {errorMsg}
+            </div>
+          )}
+
           <Button
             type="submit"
             variant="primary"
@@ -83,16 +95,12 @@ export function AuthModal() {
           >
             {isLoading ? (
               <>
-                <Loader2 size={16} className="animate-spin mr-2" /> Signing in...
+                <Loader2 size={16} className="animate-spin mr-2" /> Authenticating...
               </>
             ) : (
-              'Sign In'
+              'Sign In / Sign Up'
             )}
           </Button>
-
-          <p className="text-xs text-secondary text-center mt-4">
-            *Mock Authentication. Enter any email and password to test the flow.
-          </p>
         </form>
       </div>
     </div>

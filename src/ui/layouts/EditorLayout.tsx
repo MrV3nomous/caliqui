@@ -53,13 +53,16 @@ export function EditorLayout() {
 
   useKeyboardShortcuts();
 
+  const [isInitializing, setIsInitializing] = useState(true);
   const [showRightDock, setShowRightDock] = useState(false);
   const [showLeftDock, setShowLeftDock] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [showSaveSuccess, setShowSaveSuccess] = useState(false);
 
-  // Cart Modal State
+  // Modals State
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+
   const [selectedSizes, setSelectedSizes] = useState<Record<string, number>>({
     S: 0,
     M: 1,
@@ -71,10 +74,25 @@ export function EditorLayout() {
   const [cartAnim, setCartAnim] = useState(false);
 
   useEffect(() => {
-    init();
+    let mounted = true;
+
+    const initializeEditor = async () => {
+      try {
+        await init();
+      } finally {
+        if (mounted) setIsInitializing(false);
+      }
+    };
+
+    initializeEditor();
+
     if (typeof window !== 'undefined' && window.innerWidth >= 1024) {
       setShowRightDock(true);
     }
+
+    return () => {
+      mounted = false;
+    };
   }, [init]);
 
   const totalCartItems = cart.reduce(
@@ -161,10 +179,9 @@ export function EditorLayout() {
     }
   };
 
-  const handleReset = () => {
-    if (window.confirm('Start a new design? Any unsaved changes will be lost.')) {
-      resetDesign();
-    }
+  const confirmReset = () => {
+    resetDesign();
+    setIsResetModalOpen(false);
   };
 
   const isBrushToolActive = ['fill', 'blur', 'burn', 'saturate', 'erase'].includes(globalToolMode);
@@ -181,8 +198,62 @@ export function EditorLayout() {
         }
       `}</style>
 
+      {/* BOOTSTRAP INITIALIZATION OVERLAY */}
+      {isInitializing && (
+        <div className="fixed inset-0 z-[1000] bg-[#fbfbfd] flex flex-col items-center justify-center animate-out fade-out duration-500">
+          <img
+            src="/logo.png"
+            alt={env.VITE_APP_NAME}
+            className="h-8 mb-6 animate-pulse opacity-50 drop-shadow-sm"
+          />
+          <Loader2 size={24} className="animate-spin text-black" />
+          <p className="text-[10px] font-extrabold text-neutral-400 uppercase tracking-widest mt-6">
+            Initializing Studio
+          </p>
+        </div>
+      )}
+
       <ContextMenu />
       <AuthModal />
+
+      {/* CUSTOM RESET CANVAS MODAL */}
+      {isResetModalOpen && (
+        // biome-ignore lint/a11y/useKeyWithClickEvents: Modal backdrop overlay
+        // biome-ignore lint/a11y/noStaticElementInteractions: Modal backdrop overlay
+        <div
+          className="fixed inset-0 z-[600] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in"
+          onClick={() => setIsResetModalOpen(false)}
+        >
+          {/* biome-ignore lint/a11y/useKeyWithClickEvents: Modal content container */}
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: Modal content container */}
+          <div
+            className="bg-white rounded-[2rem] p-6 sm:p-8 w-full max-w-sm shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-extrabold text-xl mb-2">Start Fresh?</h3>
+            <p className="text-neutral-500 font-medium text-sm mb-8">
+              Any unsaved changes will be lost. Are you sure you want to completely reset your
+              canvas?
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setIsResetModalOpen(false)}
+                className="flex-1 h-12 rounded-xl text-sm font-bold bg-neutral-100 text-neutral-600 hover:bg-neutral-200 transition-colors outline-none"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmReset}
+                className="flex-1 h-12 rounded-xl text-sm font-bold bg-red-500 text-white hover:bg-red-600 transition-colors outline-none"
+              >
+                Reset Canvas
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* SIZE SELECTION & ADD TO CART MODAL */}
       {isOrderModalOpen && (
@@ -394,7 +465,7 @@ export function EditorLayout() {
             {/* 2. New Design */}
             <button
               type="button"
-              onClick={handleReset}
+              onClick={() => setIsResetModalOpen(true)}
               className="flex items-center justify-center h-8 px-2.5 text-xs font-bold text-neutral-500 hover:text-black hover:bg-neutral-100 rounded-full transition-all outline-none shrink-0 gap-1"
               title="Start New Design"
             >

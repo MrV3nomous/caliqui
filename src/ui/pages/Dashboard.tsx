@@ -10,10 +10,12 @@ import {
   Plus,
   Settings2,
   ShoppingBag,
+  Sparkles,
+  Store,
   Trash2,
   X,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router';
 import { env } from '@/shared/env';
 import { supabase } from '@/shared/lib/supabase';
@@ -66,17 +68,22 @@ export function Dashboard() {
   const [isAddingAddr, setIsAddingAddr] = useState(false);
   const [newAddr, setNewAddr] = useState({ label: '', fullName: '', phone: '', address: '' });
 
-  // Cart Modal State
+  // Flawless Size Selection State (Ported from Editor/Marketplace)
   const [selectedDesign, setSelectedDesign] = useState<SavedDesign | null>(null);
   const [selectedSizes, setSelectedSizes] = useState<Record<string, number>>({
     S: 0,
-    M: 1,
+    M: 0,
     L: 0,
     XL: 0,
     XXL: 0,
   });
+  const [focusedSize, setFocusedSize] = useState<string>('M');
   const [isAdding, setIsAdding] = useState(false);
   const [cartAnim, setCartAnim] = useState(false);
+
+  // Touch & Hold Logic for Mobile Size Removal
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isLongPress = useRef(false);
 
   useEffect(() => {
     localStorage.setItem('caliqui_dashboard_tab', activeTab);
@@ -110,16 +117,49 @@ export function Dashboard() {
     0,
   );
 
-  const totalQty = Object.values(selectedSizes).reduce((a, b) => a + b, 0);
   const currentPrice = selectedDesign ? 1499 + (selectedDesign.canvas_state?.length || 0) * 150 : 0;
-  const totalPrice = totalQty * currentPrice;
+  const totalQty = Object.values(selectedSizes).reduce((a, b) => a + b, 0);
+  const totalPrice = totalQty > 0 ? totalQty * currentPrice : currentPrice;
 
+  // --- Advanced Luxury Size Interaction Handlers ---
   const updateLocalSize = (size: string, delta: number) => {
     setSelectedSizes((prev) => ({
       ...prev,
       [size]: Math.max(0, prev[size] + delta),
     }));
   };
+
+  const handleSizeLeftClick = (e: React.MouseEvent, size: string) => {
+    e.preventDefault();
+    if (isLongPress.current) {
+      isLongPress.current = false;
+      return;
+    }
+    setFocusedSize(size);
+    updateLocalSize(size, 1);
+  };
+
+  const handleSizeRightClick = (e: React.MouseEvent, size: string) => {
+    e.preventDefault();
+    setFocusedSize(size);
+    updateLocalSize(size, -1);
+  };
+
+  const handleTouchStart = (size: string) => {
+    isLongPress.current = false;
+    longPressTimer.current = setTimeout(() => {
+      isLongPress.current = true;
+      setFocusedSize(size);
+      updateLocalSize(size, -1);
+    }, 500);
+  };
+
+  const handleTouchEnd = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+    }
+  };
+  // ------------------------------------------------
 
   const handleEditDesign = (designId: string) => {
     const workspaceStr = localStorage.getItem('caliqui_workspace');
@@ -139,6 +179,7 @@ export function Dashboard() {
   const handleOpenSizeModal = (design: SavedDesign) => {
     setSelectedDesign(design);
     setSelectedSizes({ S: 0, M: 1, L: 0, XL: 0, XXL: 0 });
+    setFocusedSize('M');
   };
 
   const confirmAddToCart = () => {
@@ -216,167 +257,226 @@ export function Dashboard() {
   };
 
   if (isLoading) {
-    return <PremiumLoader />;
+    return <PremiumLoader fullScreen={true} />;
   }
 
   if (!profile) return <Navigate to="/marketplace" replace />;
 
   return (
-    <div className="w-full h-[100dvh] bg-[#fbfbfd] text-black font-sans flex flex-col selection:bg-neutral-200 overflow-y-auto overflow-x-hidden">
+    <div className="w-full h-[100dvh] bg-white text-black font-sans flex flex-col selection:bg-neutral-200 overflow-y-auto overflow-x-hidden select-none">
       <style>{`
         .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
 
-      {/* QUICK ADD TO CART MODAL */}
+      {/* APPLE-STYLE QUICK ADD TO CART MODAL */}
       {selectedDesign && (
-        <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 animate-in fade-in">
-          {/* Accessible Semantic Backdrop */}
+        <div className="fixed inset-0 z-[500] flex items-center justify-center p-4">
           <button
             type="button"
             aria-label="Close modal"
-            className="absolute inset-0 w-full h-full bg-black/40 backdrop-blur-sm outline-none cursor-default border-0 p-0 m-0"
+            className="absolute inset-0 w-full h-full bg-black/40 backdrop-blur-sm outline-none cursor-default border-0 p-0 m-0 animate-in fade-in duration-300"
             onClick={() => setSelectedDesign(null)}
           />
-          {/* Dialog Content */}
           <div
             role="dialog"
             aria-modal="true"
-            className="relative z-10 bg-white rounded-[2rem] p-6 sm:p-8 w-full max-w-sm shadow-2xl"
+            className="relative z-10 bg-white rounded-[2rem] p-6 sm:p-8 w-full max-w-[420px] shadow-2xl animate-in zoom-in-95 duration-300 ease-out"
           >
             <div className="flex justify-between items-center mb-6">
-              <h3 className="font-extrabold text-xl">Select Sizes</h3>
+              <div>
+                <h3 className="font-medium tracking-tight text-xl text-black">Select Sizes</h3>
+                <p className="text-[10px] text-neutral-400 mt-1 uppercase tracking-widest">
+                  ₹{currentPrice.toLocaleString('en-IN')} per unit
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={() => setSelectedDesign(null)}
-                className="text-neutral-400 hover:text-black outline-none"
+                className="w-8 h-8 flex items-center justify-center bg-neutral-100 hover:bg-neutral-200 text-black rounded-full transition-colors outline-none"
               >
-                <X size={20} />
+                <X size={16} strokeWidth={1.5} />
               </button>
             </div>
 
-            <div className="space-y-3 mb-8">
-              {['S', 'M', 'L', 'XL', 'XXL'].map((size) => (
-                <div
-                  key={size}
-                  className="flex items-center justify-between p-2 rounded-xl hover:bg-neutral-50 transition-colors"
+            <p className="text-[10px] text-neutral-400 mb-4 tracking-wide text-center">
+              Left-click to add, right-click to remove. Mobile: tap to add, press & hold to remove.
+            </p>
+
+            <div className="grid grid-cols-5 gap-2 mb-6">
+              {['S', 'M', 'L', 'XL', 'XXL'].map((size) => {
+                const qty = selectedSizes[size] || 0;
+                const isFocused = focusedSize === size;
+                return (
+                  <button
+                    key={size}
+                    type="button"
+                    onClick={(e) => handleSizeLeftClick(e, size)}
+                    onContextMenu={(e) => handleSizeRightClick(e, size)}
+                    onTouchStart={() => handleTouchStart(size)}
+                    onTouchEnd={handleTouchEnd}
+                    className={`relative h-12 rounded-xl flex items-center justify-center text-xs font-medium transition-all outline-none border select-none touch-none ${
+                      isFocused
+                        ? 'border-black border-[1.5px] text-black shadow-sm bg-neutral-50/30'
+                        : 'border-neutral-200 text-neutral-400 hover:border-black/40 hover:text-black'
+                    }`}
+                  >
+                    {size}
+                    {qty > 0 && (
+                      <span className="absolute -top-1.5 -right-1.5 w-[16px] h-[16px] bg-black text-white text-[8px] font-bold flex items-center justify-center rounded-full shadow-sm animate-in zoom-in border-2 border-white">
+                        {qty}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex items-center justify-between px-5 py-4 bg-[#fbfbfd] border border-black/[0.04] rounded-2xl mb-8 transition-all">
+              <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-neutral-500">
+                Quantity <span className="text-black font-bold ml-1">({focusedSize})</span>
+              </span>
+              <div className="flex items-center gap-6 text-black">
+                <button
+                  type="button"
+                  onClick={() => updateLocalSize(focusedSize, -1)}
+                  disabled={selectedSizes[focusedSize] === 0}
+                  className="hover:opacity-50 disabled:opacity-20 outline-none p-1.5 transition-opacity bg-white rounded-md shadow-sm border border-black/5"
                 >
-                  <span className="font-extrabold text-sm w-12">{size}</span>
-                  <div className="flex items-center gap-4 bg-white border border-black/10 rounded-xl p-1 shadow-sm">
-                    <button
-                      type="button"
-                      onClick={() => updateLocalSize(size, -1)}
-                      disabled={selectedSizes[size] === 0}
-                      className="w-8 h-8 flex items-center justify-center text-neutral-400 hover:text-black disabled:opacity-30 transition-colors outline-none"
-                    >
-                      <Minus size={14} strokeWidth={3} />
-                    </button>
-                    <span className="font-bold w-4 text-center text-sm">{selectedSizes[size]}</span>
-                    <button
-                      type="button"
-                      onClick={() => updateLocalSize(size, 1)}
-                      className="w-8 h-8 flex items-center justify-center text-neutral-400 hover:text-black transition-colors outline-none"
-                    >
-                      <Plus size={14} strokeWidth={3} />
-                    </button>
-                  </div>
-                </div>
-              ))}
+                  <Minus size={14} strokeWidth={1.5} />
+                </button>
+                <span className="text-sm font-semibold w-6 text-center">
+                  {selectedSizes[focusedSize] || 0}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => updateLocalSize(focusedSize, 1)}
+                  className="hover:opacity-50 outline-none p-1.5 transition-opacity bg-white rounded-md shadow-sm border border-black/5"
+                >
+                  <Plus size={14} strokeWidth={1.5} />
+                </button>
+              </div>
             </div>
 
             <button
               type="button"
               onClick={confirmAddToCart}
               disabled={totalQty === 0 || isAdding}
-              className="w-full h-14 bg-black hover:bg-neutral-800 disabled:bg-neutral-300 text-white rounded-xl font-extrabold flex items-center justify-center transition-all shadow-[0_8px_20px_rgba(0,0,0,0.12)] outline-none"
+              className="w-full h-14 bg-black hover:bg-neutral-800 disabled:bg-neutral-200 disabled:text-neutral-400 text-white font-medium uppercase tracking-[0.15em] text-[11px] rounded-full transition-all flex items-center justify-center outline-none shadow-lg"
             >
               {isAdding ? (
-                <span className="flex items-center gap-2">
-                  <Check size={18} /> Added to Cart
+                <span className="flex items-center gap-3">
+                  <Check size={16} strokeWidth={1.5} /> Added To Bag
                 </span>
               ) : (
-                `Add to Cart • ₹${totalPrice}`
+                `Add To Bag — ₹${totalPrice.toLocaleString('en-IN')}`
               )}
             </button>
           </div>
         </div>
       )}
 
-      <header className="h-16 bg-white/80 backdrop-blur-2xl border-b border-black/5 flex items-center justify-between px-4 sm:px-6 lg:px-10 shrink-0 z-20 sticky top-0">
-        <Link to="/" className="hover:opacity-70 transition-opacity outline-none">
+      {/* LUXURY GLOBAL HEADER - Synced with Marketplace & Editor */}
+      <header className="h-[70px] bg-white/95 backdrop-blur-md border-b border-black/[0.04] flex items-center justify-between px-5 sm:px-6 lg:px-12 shrink-0 z-40 sticky top-0">
+        <Link to="/" className="hover:opacity-60 transition-opacity outline-none">
           <img
             src="/logo.png"
             alt={env.VITE_APP_NAME}
-            className="h-7 md:h-8 w-auto object-contain drop-shadow-sm"
+            className="h-5 md:h-6 w-auto object-contain"
           />
         </Link>
-        <div className="flex items-center gap-5 sm:gap-6">
+
+        <div className="flex items-center gap-4 sm:gap-6 md:gap-8">
           <Link
             to="/marketplace"
-            className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-neutral-500 hover:text-black transition-colors outline-none"
+            className="flex items-center gap-1.5 px-2 sm:px-3 h-9 rounded-full text-neutral-500 hover:text-black hover:bg-neutral-100 transition-colors outline-none shrink-0"
+            title="Collection"
           >
-            Collection
+            <Store size={20} strokeWidth={1.5} />
+            <span className="hidden md:inline uppercase tracking-[0.15em] text-[10px] font-medium">
+              Collection
+            </span>
           </Link>
+
           <Link
             to="/editor"
-            className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-neutral-500 hover:text-black transition-colors outline-none"
+            className="flex items-center gap-1.5 px-2 sm:px-3 h-9 rounded-full text-neutral-500 hover:text-black hover:bg-neutral-100 transition-colors outline-none shrink-0"
+            title="Studio"
           >
-            Studio
+            <Sparkles size={20} strokeWidth={1.5} />
+            <span className="hidden md:inline uppercase tracking-[0.15em] text-[10px] font-medium">
+              Studio
+            </span>
           </Link>
 
-          <div className="w-px h-4 bg-black/10 mx-1 sm:mx-2" />
+          <div className="hidden sm:block w-px h-3 bg-neutral-200 mx-1" />
 
-          {/* Global Cart Icon */}
+          {/* Cart Notification */}
           <Link
             to="/checkout"
-            className={`relative flex items-center justify-center transition-all duration-300 outline-none ${cartAnim ? 'scale-125 text-green-600 drop-shadow-md' : 'text-black hover:opacity-70'}`}
+            className={`relative flex items-center justify-center p-1 transition-all duration-300 outline-none ${cartAnim ? 'scale-110' : 'hover:opacity-60'}`}
+            title="Cart"
           >
-            <ShoppingBag size={20} />
+            <ShoppingBag size={20} strokeWidth={1.5} className="text-black" />
             {totalCartItems > 0 && (
-              <span className="absolute -top-1.5 -right-2 bg-red-500 text-white text-[9px] font-extrabold w-4 h-4 rounded-full flex items-center justify-center">
+              <span className="absolute -top-1.5 -right-2 bg-black text-white text-[9px] font-bold min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center border-[2px] border-white shadow-sm">
                 {totalCartItems}
               </span>
             )}
           </Link>
 
+          {/* Minimal Sign Out */}
           <button
             type="button"
             onClick={handleSignOut}
-            className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-red-400 hover:text-red-600 transition-colors sm:ml-2 flex items-center gap-1.5 outline-none"
+            className="text-[10px] font-medium uppercase tracking-[0.15em] text-neutral-400 hover:text-black transition-colors flex items-center gap-1.5 outline-none ml-2"
           >
-            <LogOut size={14} className="hidden sm:block" /> Sign Out
+            <LogOut size={14} strokeWidth={1.5} className="hidden sm:block" />
+            <span>Sign Out</span>
           </button>
         </div>
       </header>
 
-      <main className="flex-1 max-w-[1200px] w-full mx-auto px-4 sm:px-6 lg:px-10 py-6 sm:py-8 lg:py-16 pb-24">
-        <div className="mb-6 md:mb-16">
-          <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight mb-2">
+      {/* DASHBOARD CONTENT */}
+      <main className="flex-1 max-w-[1600px] w-full mx-auto px-6 lg:px-12 py-10 pb-32">
+        <div className="mb-10 md:mb-14">
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-light tracking-tight text-black mb-3">
             Account
           </h1>
-          <p className="text-neutral-500 font-medium text-sm md:text-base truncate">
-            {profile?.full_name ? `Welcome back, ${profile.full_name}.` : user?.email}
+          <p className="text-neutral-400 font-medium text-[11px] sm:text-xs tracking-widest uppercase">
+            {profile?.full_name ? `Welcome, ${profile.full_name}` : user?.email}
           </p>
         </div>
 
-        <div className="relative border-b border-black/10 mb-8 md:mb-12">
-          <div
-            className="flex items-center gap-6 sm:gap-8 overflow-x-auto w-full hide-scrollbar pt-1"
-            style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-          >
+        {/* Minimal Tab Bar */}
+        <div className="relative border-b border-black/[0.04] mb-10 md:mb-12">
+          <div className="flex items-center gap-8 overflow-x-auto w-full hide-scrollbar pb-px">
             {[
-              { id: 'orders', label: 'Order History', icon: <Package size={16} /> },
-              { id: 'designs', label: 'Saved Designs', icon: <ImageIcon size={16} /> },
-              { id: 'addresses', label: 'Addresses', icon: <MapPin size={16} /> },
-              { id: 'settings', label: 'Preferences', icon: <Settings2 size={16} /> },
+              {
+                id: 'orders',
+                label: 'Order History',
+                icon: <Package size={14} strokeWidth={1.5} />,
+              },
+              {
+                id: 'designs',
+                label: 'Saved Designs',
+                icon: <ImageIcon size={14} strokeWidth={1.5} />,
+              },
+              { id: 'addresses', label: 'Addresses', icon: <MapPin size={14} strokeWidth={1.5} /> },
+              {
+                id: 'settings',
+                label: 'Preferences',
+                icon: <Settings2 size={14} strokeWidth={1.5} />,
+              },
             ].map((tab) => (
               <button
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id as Tab)}
-                className={`flex items-center gap-2 pb-4 text-[10px] sm:text-xs font-extrabold uppercase tracking-widest transition-all whitespace-nowrap outline-none border-b-2 shrink-0 ${
+                className={`flex items-center gap-2.5 pb-4 text-[10px] font-medium uppercase tracking-[0.15em] transition-all whitespace-nowrap outline-none border-b-2 shrink-0 ${
                   activeTab === tab.id
                     ? 'text-black border-black'
-                    : 'text-neutral-400 border-transparent hover:text-neutral-600'
+                    : 'text-neutral-400 border-transparent hover:text-black hover:border-black/20'
                 }`}
               >
                 {tab.icon} {tab.label}
@@ -385,17 +485,19 @@ export function Dashboard() {
           </div>
         </div>
 
-        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
+          {/* ORDERS TAB */}
           {activeTab === 'orders' && (
             <div>
               {orders.length === 0 ? (
-                <div className="text-center py-16 md:py-20 bg-neutral-50 rounded-[2rem] border border-black/5">
-                  <p className="text-neutral-400 font-medium mb-4 text-sm md:text-base">
+                <div className="flex flex-col items-center justify-center text-center py-32 bg-[#fbfbfd] rounded-[2rem] border border-black/[0.03]">
+                  <Package size={32} strokeWidth={1} className="text-neutral-300 mb-6" />
+                  <p className="text-neutral-500 font-medium text-sm tracking-wide mb-6">
                     You haven't placed any orders yet.
                   </p>
                   <Link
                     to="/marketplace"
-                    className="inline-flex items-center justify-center px-6 py-3 bg-black text-white text-xs font-bold rounded-full hover:bg-neutral-800 transition-colors"
+                    className="inline-flex items-center justify-center px-8 h-12 bg-black text-white text-[10px] uppercase tracking-[0.15em] font-medium rounded-full hover:bg-neutral-800 transition-colors shadow-sm outline-none"
                   >
                     Explore Collection
                   </Link>
@@ -405,10 +507,11 @@ export function Dashboard() {
                   {orders.map((order) => (
                     <div
                       key={order.id}
-                      className="flex flex-col md:flex-row md:items-center justify-between p-4 sm:p-6 bg-white border border-black/5 rounded-[2rem] shadow-sm gap-4 hover:shadow-md transition-shadow"
+                      className="flex flex-col md:flex-row md:items-center justify-between p-6 bg-[#fbfbfd] border border-black/[0.04] rounded-3xl gap-6 transition-colors hover:bg-[#f5f5f7]"
                     >
-                      <div className="flex items-center gap-4">
-                        <div className="w-14 h-14 sm:w-16 sm:h-16 bg-neutral-100 rounded-2xl flex items-center justify-center shrink-0 overflow-hidden relative cursor-grab active:cursor-grabbing">
+                      <div className="flex items-center gap-5">
+                        {/* Soft constrained preview box */}
+                        <div className="w-16 h-16 sm:w-20 sm:h-20 bg-[#ebebeb] rounded-2xl flex items-center justify-center shrink-0 overflow-hidden relative cursor-grab active:cursor-grabbing p-2">
                           {order.design_id && order.designs ? (
                             <Mini3DViewer
                               canvasState={order.designs.canvas_state as Record<string, unknown>[]}
@@ -420,30 +523,33 @@ export function Dashboard() {
                               }
                             />
                           ) : (
-                            <Package size={20} className="text-neutral-500" />
+                            <Package size={20} strokeWidth={1.5} className="text-neutral-400" />
                           )}
                         </div>
                         <div>
-                          <p className="font-bold text-sm">
-                            {order.marketplace_item_id ? 'Premium Apparel' : 'Custom Studio Design'}
+                          <p className="font-medium text-sm text-black tracking-wide mb-1">
+                            {order.marketplace_item_id ? 'Premium Apparel' : 'Studio Bespoke'}
                           </p>
-                          <p className="text-[10px] md:text-xs text-neutral-500 font-medium mt-0.5">
+                          <p className="text-[10px] text-neutral-400 uppercase tracking-widest font-medium">
                             {formatDate(order.created_at)} • Size {order.size} • Qty{' '}
                             {order.quantity}
                           </p>
                         </div>
                       </div>
-                      <div className="flex items-center justify-between md:justify-end gap-6 md:w-1/3 border-t border-black/5 md:border-0 pt-3 md:pt-0">
+
+                      <div className="flex items-center justify-between md:justify-end gap-6 md:w-1/3 border-t border-black/5 md:border-0 pt-4 md:pt-0">
                         <div className="text-left md:text-right">
-                          <p className="font-extrabold text-sm">₹{order.amount}</p>
+                          <p className="font-medium text-sm tracking-wider mb-2">
+                            ₹{order.amount.toLocaleString('en-IN')}
+                          </p>
                           <span
-                            className={`inline-block mt-1 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest rounded-full ${
+                            className={`inline-flex items-center px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.2em] rounded-md ${
                               order.status === 'processing'
-                                ? 'bg-amber-100 text-amber-700'
+                                ? 'bg-neutral-100 text-neutral-600'
                                 : order.status === 'shipped'
-                                  ? 'bg-blue-100 text-blue-700'
+                                  ? 'bg-blue-50 text-blue-600'
                                   : order.status === 'delivered'
-                                    ? 'bg-green-100 text-green-700'
+                                    ? 'bg-green-50 text-green-600'
                                     : 'bg-neutral-100 text-neutral-500'
                             }`}
                           >
@@ -458,72 +564,77 @@ export function Dashboard() {
             </div>
           )}
 
+          {/* DESIGNS TAB */}
           {activeTab === 'designs' && (
             <div>
               {designs.length === 0 ? (
-                <div className="text-center py-16 md:py-20 bg-neutral-50 rounded-[2rem] border border-black/5">
-                  <p className="text-neutral-400 font-medium mb-4 text-sm md:text-base">
+                <div className="flex flex-col items-center justify-center text-center py-32 bg-[#fbfbfd] rounded-[2rem] border border-black/[0.03]">
+                  <ImageIcon size={32} strokeWidth={1} className="text-neutral-300 mb-6" />
+                  <p className="text-neutral-500 font-medium text-sm tracking-wide mb-6">
                     Your studio canvas is empty.
                   </p>
                   <Link
                     to="/editor"
-                    className="inline-flex items-center justify-center px-6 py-3 bg-black text-white text-xs font-bold rounded-full hover:bg-neutral-800 transition-colors"
+                    className="inline-flex items-center justify-center px-8 h-12 bg-black text-white text-[10px] uppercase tracking-[0.15em] font-medium rounded-full hover:bg-neutral-800 transition-colors shadow-sm outline-none"
                   >
                     Open Studio
                   </Link>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 min-[480px]:grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6">
+                <div className="grid grid-cols-1 min-[480px]:grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
                   {designs.map((design) => (
-                    <div
-                      key={design.id}
-                      className="group relative bg-white border border-black/5 rounded-3xl overflow-hidden shadow-sm hover:shadow-md transition-all flex flex-col"
-                    >
-                      <div className="aspect-square bg-neutral-100 relative cursor-grab active:cursor-grabbing w-full">
-                        <Mini3DViewer
-                          canvasState={design.canvas_state as Record<string, unknown>[]}
-                          tshirtColor={design.tshirt_color}
-                          fallbackImage={design.thumbnail_url}
-                          apparelModel={
-                            (design as { apparel_model?: string }).apparel_model || 'tshirtman'
-                          }
-                        />
-                        <button
-                          type="button"
-                          onClick={() => deleteDesign(design.id)}
-                          className="absolute top-3 right-3 p-2 bg-white/90 backdrop-blur-md rounded-full text-neutral-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all shadow-sm outline-none z-10"
-                          title="Delete Design"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                      <div className="p-4 border-t border-black/5 flex items-center justify-between bg-white z-10">
-                        <div className="truncate pr-2">
-                          <h3 className="text-xs font-bold truncate">
-                            {design.name || 'Untitled'}
-                          </h3>
-                          <p className="text-[10px] text-neutral-500 mt-0.5">
-                            {formatDate(design.created_at)}
-                          </p>
+                    <div key={design.id} className="group relative bg-transparent flex flex-col">
+                      {/* Apple-style floating thumbnail box */}
+                      <div className="aspect-[4/5] bg-[#f8f8f8] rounded-2xl overflow-hidden relative w-full mb-3 transition-colors duration-500 group-hover:bg-[#f0f0f0] p-6 sm:p-8">
+                        <div className="absolute inset-0 p-6 sm:p-8 transition-transform duration-1000 group-hover:scale-[1.03] cursor-grab active:cursor-grabbing">
+                          <Mini3DViewer
+                            canvasState={design.canvas_state as Record<string, unknown>[]}
+                            tshirtColor={design.tshirt_color}
+                            fallbackImage={design.thumbnail_url}
+                            apparelModel={
+                              (design as { apparel_model?: string }).apparel_model || 'tshirtman'
+                            }
+                          />
                         </div>
-                        <div className="flex gap-2 shrink-0">
+
+                        {/* Overlay Controls */}
+                        <div className="absolute inset-0 bg-black/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
+
+                        <div className="absolute top-3 right-3 flex flex-col gap-2 translate-x-4 opacity-0 group-hover:translate-x-0 group-hover:opacity-100 transition-all duration-300 z-10">
                           <button
                             type="button"
                             onClick={() => handleOpenSizeModal(design)}
-                            className="w-8 h-8 rounded-full bg-black/5 flex items-center justify-center hover:bg-black hover:text-white transition-colors outline-none"
-                            title="Select Size & Add to Cart"
+                            className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center hover:scale-110 transition-transform outline-none shadow-sm"
+                            title="Add to Cart"
                           >
-                            <ShoppingBag size={14} />
+                            <ShoppingBag size={13} strokeWidth={2} />
                           </button>
                           <button
                             type="button"
                             onClick={() => handleEditDesign(design.id)}
-                            className="w-8 h-8 rounded-full bg-black/5 flex items-center justify-center hover:bg-black hover:text-white transition-colors outline-none"
+                            className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center hover:scale-110 transition-transform outline-none shadow-sm"
                             title="Edit Design"
                           >
-                            <ArrowRight size={14} />
+                            <ArrowRight size={13} strokeWidth={2} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deleteDesign(design.id)}
+                            className="w-8 h-8 rounded-full bg-white text-red-500 flex items-center justify-center hover:scale-110 transition-transform outline-none shadow-sm"
+                            title="Delete"
+                          >
+                            <Trash2 size={13} strokeWidth={2} />
                           </button>
                         </div>
+                      </div>
+
+                      <div className="flex flex-col px-1 w-full">
+                        <h3 className="font-medium text-xs tracking-tight text-black truncate mb-1">
+                          {design.name || 'Untitled Design'}
+                        </h3>
+                        <p className="text-[10px] font-medium text-neutral-400 tracking-widest uppercase">
+                          {formatDate(design.created_at)}
+                        </p>
                       </div>
                     </div>
                   ))}
@@ -532,39 +643,40 @@ export function Dashboard() {
             </div>
           )}
 
+          {/* ADDRESSES TAB */}
           {activeTab === 'addresses' && (
             <div className="space-y-6 max-w-4xl">
-              <div className="flex justify-between items-center bg-white border border-black/5 rounded-[2rem] p-5 sm:p-6 shadow-sm">
+              <div className="flex justify-between items-center bg-[#fbfbfd] border border-black/[0.04] rounded-[2rem] p-6 shadow-sm">
                 <div>
-                  <h2 className="text-xs sm:text-sm font-extrabold uppercase tracking-widest text-black">
+                  <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-black mb-1">
                     Address Book
                   </h2>
-                  <p className="text-[10px] sm:text-xs font-semibold text-neutral-500 mt-1">
+                  <p className="text-xs font-light text-neutral-500 tracking-wide">
                     Manage your delivery destinations.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsAddingAddr(!isAddingAddr)}
-                  className="bg-black text-white px-3 sm:px-4 py-2 rounded-xl text-[10px] sm:text-xs font-bold flex items-center gap-1.5 hover:bg-neutral-800 transition-colors shrink-0 outline-none"
+                  className="bg-black text-white px-5 h-10 rounded-full text-[10px] uppercase tracking-[0.1em] font-medium flex items-center gap-2 hover:bg-neutral-800 transition-colors shrink-0 outline-none"
                 >
-                  <Plus size={14} /> Add New
+                  <Plus size={14} strokeWidth={1.5} /> Add New
                 </button>
               </div>
 
               {isAddingAddr && (
                 <form
                   onSubmit={handleSaveNewAddress}
-                  className="bg-white border border-black/5 rounded-[2rem] p-5 sm:p-8 shadow-sm space-y-4 animate-in slide-in-from-top-4"
+                  className="bg-white border border-black/5 rounded-[2rem] p-6 sm:p-8 shadow-sm space-y-5 animate-in slide-in-from-top-4"
                 >
-                  <h3 className="text-xs font-extrabold uppercase tracking-widest text-neutral-400 mb-4">
+                  <h3 className="text-[10px] font-medium uppercase tracking-[0.2em] text-neutral-400 mb-6">
                     New Delivery Address
                   </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                     <div>
                       <Label
                         htmlFor="new-label"
-                        className="text-[10px] font-extrabold text-neutral-400 uppercase tracking-widest ml-1"
+                        className="text-[9px] font-medium text-neutral-400 uppercase tracking-[0.2em] ml-1 mb-2 block"
                       >
                         Label (e.g. Home, Office)
                       </Label>
@@ -572,14 +684,14 @@ export function Dashboard() {
                         id="new-label"
                         value={newAddr.label}
                         onChange={(e) => setNewAddr({ ...newAddr, label: e.target.value })}
-                        className="bg-neutral-50 h-12 rounded-xl mt-1"
+                        className="bg-[#fbfbfd] border-black/[0.05] h-12 rounded-2xl text-xs font-medium focus:border-black/20 focus:bg-white transition-colors"
                         required
                       />
                     </div>
                     <div>
                       <Label
                         htmlFor="new-fullname"
-                        className="text-[10px] font-extrabold text-neutral-400 uppercase tracking-widest ml-1"
+                        className="text-[9px] font-medium text-neutral-400 uppercase tracking-[0.2em] ml-1 mb-2 block"
                       >
                         Recipient Name
                       </Label>
@@ -587,14 +699,14 @@ export function Dashboard() {
                         id="new-fullname"
                         value={newAddr.fullName}
                         onChange={(e) => setNewAddr({ ...newAddr, fullName: e.target.value })}
-                        className="bg-neutral-50 h-12 rounded-xl mt-1"
+                        className="bg-[#fbfbfd] border-black/[0.05] h-12 rounded-2xl text-xs font-medium focus:border-black/20 focus:bg-white transition-colors"
                         required
                       />
                     </div>
                     <div>
                       <Label
                         htmlFor="new-phone"
-                        className="text-[10px] font-extrabold text-neutral-400 uppercase tracking-widest ml-1"
+                        className="text-[9px] font-medium text-neutral-400 uppercase tracking-[0.2em] ml-1 mb-2 block"
                       >
                         Phone Number
                       </Label>
@@ -602,14 +714,14 @@ export function Dashboard() {
                         id="new-phone"
                         value={newAddr.phone}
                         onChange={(e) => setNewAddr({ ...newAddr, phone: e.target.value })}
-                        className="bg-neutral-50 h-12 rounded-xl mt-1"
+                        className="bg-[#fbfbfd] border-black/[0.05] h-12 rounded-2xl text-xs font-medium focus:border-black/20 focus:bg-white transition-colors"
                         required
                       />
                     </div>
                     <div>
                       <Label
                         htmlFor="new-address"
-                        className="text-[10px] font-extrabold text-neutral-400 uppercase tracking-widest ml-1"
+                        className="text-[9px] font-medium text-neutral-400 uppercase tracking-[0.2em] ml-1 mb-2 block"
                       >
                         Complete Address
                       </Label>
@@ -617,22 +729,22 @@ export function Dashboard() {
                         id="new-address"
                         value={newAddr.address}
                         onChange={(e) => setNewAddr({ ...newAddr, address: e.target.value })}
-                        className="bg-neutral-50 h-12 rounded-xl mt-1"
+                        className="bg-[#fbfbfd] border-black/[0.05] h-12 rounded-2xl text-xs font-medium focus:border-black/20 focus:bg-white transition-colors"
                         required
                       />
                     </div>
                   </div>
-                  <div className="flex justify-end pt-2 gap-3">
+                  <div className="flex justify-end pt-4 gap-3">
                     <button
                       type="button"
                       onClick={() => setIsAddingAddr(false)}
-                      className="px-4 sm:px-5 h-12 rounded-xl text-[10px] sm:text-xs font-bold text-neutral-500 hover:bg-neutral-100 transition-colors outline-none"
+                      className="px-6 h-10 rounded-full text-[10px] uppercase tracking-[0.1em] font-medium text-neutral-500 hover:bg-neutral-100 transition-colors outline-none"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
-                      className="px-5 sm:px-6 h-12 rounded-xl text-[10px] sm:text-xs font-bold bg-black text-white hover:bg-neutral-800 transition-colors shadow-md outline-none"
+                      className="px-8 h-10 rounded-full text-[10px] uppercase tracking-[0.1em] font-medium bg-black text-white hover:bg-neutral-800 transition-colors shadow-sm outline-none"
                     >
                       Save Address
                     </button>
@@ -640,30 +752,34 @@ export function Dashboard() {
                 </form>
               )}
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 {addresses.map((addr) => (
                   <div
                     key={addr.id}
-                    className="p-5 sm:p-6 bg-white border border-black/5 rounded-3xl shadow-sm flex flex-col justify-between relative group hover:shadow-md transition-shadow"
+                    className="p-6 bg-[#fbfbfd] border border-black/[0.04] rounded-[2rem] flex flex-col justify-between relative group hover:border-black/10 transition-colors"
                   >
                     <button
                       type="button"
                       onClick={() => handleDeleteAddress(addr.id)}
-                      className="absolute top-4 right-4 p-2 text-neutral-300 hover:text-red-500 transition-colors focus:text-red-500 outline-none"
+                      className="absolute top-5 right-5 p-1.5 text-neutral-300 hover:text-red-500 transition-colors outline-none bg-white rounded-full shadow-sm opacity-0 group-hover:opacity-100"
                       title="Delete Address"
                     >
-                      <Trash2 size={16} />
+                      <Trash2 size={14} strokeWidth={1.5} />
                     </button>
-                    <div className="mb-4">
-                      <span className="text-[10px] font-extrabold uppercase tracking-widest bg-neutral-100 text-neutral-600 px-3 py-1 rounded-full">
+                    <div className="mb-5">
+                      <span className="text-[9px] font-medium uppercase tracking-[0.2em] bg-white border border-black/5 text-black px-3 py-1.5 rounded-full shadow-sm">
                         {addr.label}
                       </span>
                     </div>
                     <div>
-                      <p className="font-extrabold text-sm">{addr.fullName}</p>
-                      <p className="text-xs mt-1 font-medium text-neutral-500">{addr.address}</p>
-                      <p className="text-xs mt-1 font-semibold text-neutral-400">
-                        Phone: {addr.phone}
+                      <p className="font-medium text-sm tracking-wide text-black mb-1.5">
+                        {addr.fullName}
+                      </p>
+                      <p className="text-xs font-light text-neutral-500 leading-relaxed mb-1">
+                        {addr.address}
+                      </p>
+                      <p className="text-[11px] font-medium text-neutral-400 tracking-wider">
+                        T: {addr.phone}
                       </p>
                     </div>
                   </div>
@@ -672,17 +788,18 @@ export function Dashboard() {
             </div>
           )}
 
+          {/* SETTINGS TAB */}
           {activeTab === 'settings' && (
             <div className="max-w-xl">
-              <div className="bg-white border border-black/5 rounded-[2rem] p-5 sm:p-8 shadow-sm">
-                <h2 className="text-xs sm:text-sm font-extrabold uppercase tracking-widest mb-6">
-                  Profile details
+              <div className="bg-[#fbfbfd] border border-black/[0.04] rounded-[2rem] p-6 sm:p-10 shadow-sm">
+                <h2 className="text-[10px] font-medium uppercase tracking-[0.2em] text-neutral-400 mb-8">
+                  Profile Information
                 </h2>
                 <div className="space-y-6">
                   <div>
                     <label
                       htmlFor="profile-email"
-                      className="block text-[10px] font-extrabold text-neutral-400 uppercase tracking-widest mb-2"
+                      className="block text-[9px] font-medium text-neutral-400 uppercase tracking-[0.2em] mb-2 pl-1"
                     >
                       Email Address
                     </label>
@@ -692,13 +809,13 @@ export function Dashboard() {
                       disabled
                       readOnly
                       value={user?.email || ''}
-                      className="w-full bg-neutral-50 border-transparent text-neutral-500 rounded-xl h-12 px-4 font-semibold outline-none cursor-not-allowed"
+                      className="w-full bg-transparent border border-black/[0.04] text-neutral-400 rounded-2xl h-12 px-4 text-xs font-medium outline-none cursor-not-allowed"
                     />
                   </div>
                   <div>
                     <label
                       htmlFor="profile-name"
-                      className="block text-[10px] font-extrabold text-neutral-400 uppercase tracking-widest mb-2"
+                      className="block text-[9px] font-medium text-neutral-400 uppercase tracking-[0.2em] mb-2 pl-1"
                     >
                       Full Name
                     </label>
@@ -708,18 +825,22 @@ export function Dashboard() {
                       placeholder="Add your name"
                       value={editName}
                       onChange={(e) => setEditName(e.target.value)}
-                      className="w-full bg-neutral-50 border-transparent focus:bg-white focus:ring-2 focus:ring-black/10 rounded-xl h-12 px-4 font-semibold outline-none transition-all"
+                      className="w-full bg-white border border-black/[0.04] focus:border-black/20 rounded-2xl h-12 px-4 text-xs font-medium outline-none transition-colors text-black placeholder:text-neutral-400"
                     />
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleSaveProfile}
-                    disabled={isUpdatingProfile}
-                    className="w-full sm:w-auto h-12 px-6 bg-black text-white text-xs font-bold rounded-xl hover:bg-neutral-800 disabled:bg-neutral-300 transition-all shadow-[0_8px_20px_rgba(0,0,0,0.12)] flex items-center justify-center gap-2 outline-none"
-                  >
-                    {isUpdatingProfile && <Loader2 size={14} className="animate-spin" />} Save
-                    Changes
-                  </button>
+                  <div className="pt-4">
+                    <button
+                      type="button"
+                      onClick={handleSaveProfile}
+                      disabled={isUpdatingProfile}
+                      className="w-full sm:w-auto h-12 px-8 bg-black text-white text-[10px] uppercase tracking-[0.1em] font-medium rounded-full hover:bg-neutral-800 disabled:bg-neutral-200 disabled:text-neutral-400 transition-colors shadow-md flex items-center justify-center gap-2 outline-none"
+                    >
+                      {isUpdatingProfile && (
+                        <Loader2 size={14} className="animate-spin" strokeWidth={1.5} />
+                      )}
+                      Save Changes
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

@@ -10,7 +10,6 @@ export interface MarketplaceItem {
   gallery_urls: string[];
   collection: string;
   available_sizes: string[];
-  // New 3D Engine Fields
   canvas_state?: Record<string, unknown>[];
   tshirt_color?: string;
   apparel_model?: string;

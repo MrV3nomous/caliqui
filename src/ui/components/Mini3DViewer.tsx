@@ -53,7 +53,7 @@ export function Mini3DViewer({
   }
 
   return (
-    <div className="w-full h-full cursor-grab active:cursor-grabbing relative">
+    <div className="w-full h-full cursor-grab active:cursor-grabbing relative touch-none">
       <Canvas
         camera={{ position: [0, 0, 4.5], fov: 45 }}
         gl={{ preserveDrawingBuffer: true, alpha: true, antialias: true }}
@@ -80,7 +80,9 @@ export function Mini3DViewer({
 
         <OrbitControls
           enablePan={false}
-          enableZoom={false}
+          enableZoom={true} // ENABLED ZOOM
+          minDistance={2.5} // Prevent zooming inside the model
+          maxDistance={6.0} // Prevent zooming too far out
           minPolarAngle={0}
           maxPolarAngle={Math.PI}
         />

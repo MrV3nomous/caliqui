@@ -29,7 +29,7 @@ import {
   Type,
   Unlink,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { PropertiesPanel } from '@/ui/components/PropertiesPanel';
 import { IconButton } from '@/ui/design-system';
 import type { DecalData, ShapeType } from '@/ui/store/editor-store';
@@ -57,8 +57,8 @@ export function LayersPanel() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
 
-  // Local state for the hex input to prevent React controlled/uncontrolled warnings
   const [localHexColor, setLocalHexColor] = useState(tshirtColor);
+  const colorInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setLocalHexColor(tshirtColor);
@@ -84,57 +84,57 @@ export function LayersPanel() {
   };
 
   const renderIcon = (type: string, shapeType?: ShapeType) => {
-    if (type === 'text') return <Type size={16} className="text-black" />;
-    if (type === 'image') return <ImageIcon size={16} className="text-black" />;
+    const defaultProps = { size: 14, strokeWidth: 1.5 };
+    if (type === 'text') return <Type {...defaultProps} />;
+    if (type === 'image') return <ImageIcon {...defaultProps} />;
     if (shapeType) {
-      const className = 'text-black';
       switch (shapeType) {
         case 'rectangle':
-          return <Square size={16} className={className} />;
+          return <Square {...defaultProps} />;
         case 'circle':
-          return <Circle size={16} className={className} />;
+          return <Circle {...defaultProps} />;
         case 'triangle':
-          return <Triangle size={16} className={className} />;
+          return <Triangle {...defaultProps} />;
         case 'star':
-          return <Star size={16} className={className} />;
+          return <Star {...defaultProps} />;
         case 'diamond':
-          return <Diamond size={16} className={className} />;
+          return <Diamond {...defaultProps} />;
         case 'hexagon':
-          return <Hexagon size={16} className={className} />;
+          return <Hexagon {...defaultProps} />;
         case 'octagon':
-          return <Octagon size={16} className={className} />;
+          return <Octagon {...defaultProps} />;
         case 'pentagon':
-          return <Pentagon size={16} className={className} />;
+          return <Pentagon {...defaultProps} />;
         case 'ellipse':
-          return <Circle size={16} className={`scale-x-125 ${className}`} />;
+          return <Circle {...defaultProps} className="scale-x-125" />;
         case 'capsule':
-          return <Pill size={16} className={className} />;
+          return <Pill {...defaultProps} />;
         case 'cross':
-          return <Cross size={16} className={className} />;
+          return <Cross {...defaultProps} />;
         case 'heart':
-          return <Heart size={16} className={className} />;
+          return <Heart {...defaultProps} />;
         case 'cloud':
-          return <Cloud size={16} className={className} />;
+          return <Cloud {...defaultProps} />;
         case 'arrow':
-          return <ArrowRight size={16} className={className} />;
+          return <ArrowRight {...defaultProps} />;
         case 'parallelogram':
-          return <RectangleHorizontal size={16} className={`skew-x-12 ${className}`} />;
+          return <RectangleHorizontal {...defaultProps} className="skew-x-12" />;
         case 'trapezoid':
-          return <Box size={16} className={className} />;
+          return <Box {...defaultProps} />;
         case 'chat-bubble':
-          return <MessageCircle size={16} className={className} />;
+          return <MessageCircle {...defaultProps} />;
         case 'shield':
-          return <Shield size={16} className={className} />;
+          return <Shield {...defaultProps} />;
         case 'badge':
-          return <Badge size={16} className={className} />;
+          return <Badge {...defaultProps} />;
         case 'bookmark':
-          return <Bookmark size={16} className={className} />;
+          return <Bookmark {...defaultProps} />;
         default:
-          return <Square size={16} className={className} />;
+          return <Square {...defaultProps} />;
       }
     }
-    if (type === 'drawing') return <Paintbrush size={16} className="text-black" />;
-    return <Square size={16} className="text-black" />;
+    if (type === 'drawing') return <Paintbrush {...defaultProps} />;
+    return <Square {...defaultProps} />;
   };
 
   const canGroup = selectedIds.length > 1;
@@ -150,27 +150,28 @@ export function LayersPanel() {
     return (
       <div
         key={decal.id}
-        className={`flex flex-col overflow-hidden transition-all duration-300 ${isExpanded ? 'bg-neutral-50/80 rounded-3xl border border-black/5 shadow-inner mb-3' : 'bg-transparent mb-1'}`}
+        className={`flex flex-col overflow-hidden transition-all duration-300 ${isExpanded ? 'bg-[#f8f8f8] rounded-2xl border border-black/5 mb-3' : 'bg-transparent mb-1'}`}
       >
-        {/* biome-ignore lint/a11y/useKeyWithClickEvents: Custom UI list item */}
-        {/* biome-ignore lint/a11y/noStaticElementInteractions: Custom UI list item */}
+        {/* biome-ignore lint/a11y/useKeyWithClickEvents: Custom UI */}
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: Custom UI */}
         <div
-          className={`flex items-center justify-between p-2 rounded-2xl cursor-pointer transition-colors ${isNested && !isExpanded ? 'ml-6' : ''} ${isSelected && !isExpanded ? 'bg-black text-white shadow-md' : 'hover:bg-black/5 text-black'}`}
+          className={`flex items-center justify-between p-2.5 rounded-2xl cursor-pointer transition-colors ${isNested && !isExpanded ? 'ml-6' : ''} ${isSelected && !isExpanded ? 'bg-black text-white shadow-md' : 'hover:bg-[#f5f5f7] text-black'}`}
           onClick={(e) => setSelectedId(decal.id, e.ctrlKey || e.metaKey || e.shiftKey)}
           onDoubleClick={() => {
             setEditingId(decal.id);
             setEditName(decal.name);
           }}
         >
-          <div className="flex items-center gap-3 overflow-hidden flex-1 pl-1">
+          {/* min-w-0 enforces text truncation instead of container expansion */}
+          <div className="flex items-center gap-3 overflow-hidden flex-1 pl-1 min-w-0">
             <div
-              className={`p-1.5 rounded-xl ${isSelected && !isExpanded ? 'bg-white/20 text-white' : 'bg-black/5 text-black'}`}
+              className={`p-1.5 rounded-lg shrink-0 ${isSelected && !isExpanded ? 'text-white' : 'text-neutral-500'}`}
             >
               {renderIcon(decal.type, decal.shapeType)}
             </div>
             {isEditing ? (
               <input
-                // biome-ignore lint/a11y/noAutofocus: Intentional
+                // biome-ignore lint/a11y/noAutofocus: Intentional UI behavior
                 autoFocus
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
@@ -179,11 +180,11 @@ export function LayersPanel() {
                   if (e.key === 'Enter') handleNameSubmit(decal.id);
                   if (e.key === 'Escape') setEditingId(null);
                 }}
-                className="text-xs font-bold bg-white text-black rounded px-2 py-1 outline-none w-full max-w-[120px] shadow-inner"
+                className="text-[11px] font-medium tracking-wide bg-white text-black rounded-md px-2 py-1 outline-none w-full max-w-[140px] border border-black/10 min-w-0 flex-1"
               />
             ) : (
               <span
-                className={`text-[11px] font-bold truncate ${isSelected && !isExpanded ? 'text-white' : 'text-neutral-800'}`}
+                className={`text-[11px] font-medium tracking-wide truncate min-w-0 flex-1 ${isSelected && !isExpanded ? 'text-white' : 'text-neutral-700'}`}
               >
                 {decal.name}
               </span>
@@ -194,53 +195,55 @@ export function LayersPanel() {
             <div className="flex items-center gap-1 shrink-0 pr-1">
               <IconButton
                 size="sm"
-                className={`transition-colors ${isExpanded ? 'bg-black/10 text-black' : isSelected ? 'text-white/80 hover:text-white' : 'text-neutral-400 hover:text-black'}`}
+                className={`transition-colors outline-none shrink-0 ${isExpanded ? 'bg-black/5 text-black' : isSelected ? 'text-white/80 hover:text-white' : 'text-neutral-400 hover:text-black'}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   if (!selectedIds.includes(decal.id)) setSelectedId(decal.id, false);
                   setExpandedLayerId(isExpanded ? null : decal.id);
                 }}
               >
-                <Settings2 size={16} />
+                <Settings2 size={14} strokeWidth={1.5} />
               </IconButton>
               <div
-                className={`w-px h-5 mx-0.5 ${isSelected && !isExpanded ? 'bg-white/30' : 'bg-black/10'}`}
+                className={`w-px h-4 mx-1 shrink-0 ${isSelected && !isExpanded ? 'bg-white/30' : 'bg-black/10'}`}
               />
-              <div className="flex flex-col gap-0.5">
+              <div className="flex flex-col gap-0.5 shrink-0">
                 <button
                   type="button"
-                  className={`p-0.5 rounded hover:bg-black/20 transition-colors ${isSelected && !isExpanded ? 'text-white/80 hover:text-white' : 'text-neutral-400 hover:text-black'}`}
+                  className={`p-0.5 rounded outline-none transition-colors ${isSelected && !isExpanded ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-400 hover:text-black hover:bg-black/5'}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     moveLayerUp(decal.id);
                   }}
                 >
-                  <ChevronUp size={12} />
+                  <ChevronUp size={12} strokeWidth={2} />
                 </button>
                 <button
                   type="button"
-                  className={`p-0.5 rounded hover:bg-black/20 transition-colors ${isSelected && !isExpanded ? 'text-white/80 hover:text-white' : 'text-neutral-400 hover:text-black'}`}
+                  className={`p-0.5 rounded outline-none transition-colors ${isSelected && !isExpanded ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-400 hover:text-black hover:bg-black/5'}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     moveLayerDown(decal.id);
                   }}
                 >
-                  <ChevronDown size={12} />
+                  <ChevronDown size={12} strokeWidth={2} />
                 </button>
               </div>
               <IconButton
                 size="sm"
+                className="outline-none ml-1 shrink-0"
                 onClick={(e) => {
                   e.stopPropagation();
                   removeDecal(decal.id);
                 }}
               >
                 <Trash2
-                  size={16}
+                  size={14}
+                  strokeWidth={1.5}
                   className={
                     isSelected && !isExpanded
-                      ? 'text-red-300 hover:text-red-400'
-                      : 'text-red-400 hover:text-red-600'
+                      ? 'text-white hover:text-red-300'
+                      : 'text-neutral-400 hover:text-red-500'
                   }
                 />
               </IconButton>
@@ -259,19 +262,35 @@ export function LayersPanel() {
 
   return (
     <div className="flex flex-col h-full bg-transparent overflow-hidden">
-      <div className="p-5 border-b border-black/5 bg-transparent shrink-0">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-[10px] font-extrabold uppercase tracking-widest text-neutral-400">
-            Workspace Settings
+      <div className="p-6 border-b border-black/[0.04] bg-transparent shrink-0">
+        <div className="flex items-center justify-between mb-4">
+          <span className="text-[10px] font-medium uppercase tracking-[0.2em] text-neutral-400">
+            Global Settings
           </span>
         </div>
-        <div className="flex gap-2 p-1.5 bg-black/5 rounded-2xl items-center">
-          <input
-            type="color"
-            value={tshirtColor}
-            onChange={(e) => setTshirtColor(e.target.value)}
-            className="w-8 h-8 rounded-xl cursor-pointer p-0 border-0 shrink-0 bg-transparent"
-          />
+
+        {/* FLAWLESS COLOR PICKER: Fixes square clipping artifact with custom UI wrapper */}
+        <div className="flex gap-3 p-2 bg-[#fbfbfd] border border-black/[0.04] hover:border-black/10 transition-colors rounded-2xl items-center mb-5 min-w-0">
+          <button
+            type="button"
+            onClick={() => colorInputRef.current?.click()}
+            className="w-8 h-8 rounded-full border border-black/10 shrink-0 shadow-inner relative overflow-hidden outline-none flex items-center justify-center bg-[url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAwAAAAMCAIAAADZF8uwAAAAGUlEQVQYV2M4gwH+YwCGIasIUwhT25BVBADtzYNYnXFmQAAAAABJRU5ErkJggg==')]"
+          >
+            <div
+              className="absolute inset-0"
+              style={{
+                backgroundColor: tshirtColor === 'transparent' ? 'transparent' : tshirtColor,
+              }}
+            />
+            <input
+              ref={colorInputRef}
+              type="color"
+              value={tshirtColor === 'transparent' ? '#ffffff' : tshirtColor}
+              onChange={(e) => setTshirtColor(e.target.value)}
+              className="opacity-0 absolute inset-0 w-full h-full cursor-pointer"
+            />
+          </button>
+
           <input
             value={localHexColor}
             onChange={(e) => setLocalHexColor(e.target.value)}
@@ -286,63 +305,85 @@ export function LayersPanel() {
               setLocalHexColor(finalColor);
             }}
             onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-            className="flex-1 font-mono uppercase text-[11px] font-bold bg-transparent border-0 focus:ring-0 text-black px-2 outline-none"
+            className="flex-1 font-mono uppercase text-[11px] tracking-widest font-medium bg-transparent border-0 focus:ring-0 text-black px-2 outline-none min-w-0"
           />
         </div>
-        <div className="mt-4 flex items-center justify-between px-1">
-          <span className="text-[10px] text-neutral-600 font-extrabold uppercase tracking-widest">
-            Auto-Select
+
+        {/* Minimal iOS-style Toggle */}
+        <div className="flex items-center justify-between px-1 shrink-0">
+          <span className="text-[10px] text-neutral-500 font-medium uppercase tracking-[0.2em] truncate pr-2">
+            Auto-Select Layer
           </span>
           <button
             type="button"
             onClick={() => setAutoSelect(!autoSelect)}
-            className={`w-9 h-5 rounded-full transition-colors relative shadow-inner ${autoSelect ? 'bg-black' : 'bg-black/10'}`}
+            className={`w-9 h-5 rounded-full transition-colors relative outline-none shrink-0 ${autoSelect ? 'bg-black' : 'bg-neutral-200'}`}
             title="Auto-Select"
           >
             <div
-              className={`w-3.5 h-3.5 rounded-full bg-white absolute top-[3px] shadow-sm transition-transform ${autoSelect ? 'left-4' : 'left-[3px]'}`}
+              className={`w-3.5 h-3.5 rounded-full bg-white absolute top-[3px] shadow-sm transition-transform ${autoSelect ? 'translate-x-[18px]' : 'translate-x-[3px]'}`}
             />
           </button>
         </div>
       </div>
 
-      <div className="px-5 py-3 border-b border-black/5 bg-transparent flex justify-between items-center shrink-0">
-        <span className="text-[10px] font-extrabold uppercase tracking-widest text-neutral-400">
+      <div className="px-6 py-4 border-b border-black/[0.04] bg-transparent flex justify-between items-center shrink-0">
+        <span className="text-[10px] font-medium uppercase tracking-[0.2em] text-neutral-400">
           Layers
         </span>
-        <div className="flex gap-1">
+        <div className="flex gap-1.5 shrink-0">
           {canGroup && (
-            <IconButton size="sm" onClick={groupSelected} title="Group">
-              <GroupIcon size={14} className="text-black" />
+            <IconButton
+              size="sm"
+              onClick={groupSelected}
+              title="Group"
+              className="bg-[#fbfbfd] hover:bg-neutral-100 border border-black/5 text-black outline-none"
+            >
+              <GroupIcon size={14} strokeWidth={1.5} />
             </IconButton>
           )}
           {canRemoveOrBreak && (
             <>
-              <IconButton size="sm" onClick={removeFromGroup} title="Ungroup">
-                <MinusCircle size={14} className="text-orange-500" />
+              <IconButton
+                size="sm"
+                onClick={removeFromGroup}
+                title="Ungroup"
+                className="bg-[#fbfbfd] hover:bg-neutral-100 border border-black/5 outline-none"
+              >
+                <MinusCircle size={14} strokeWidth={1.5} className="text-orange-500" />
               </IconButton>
-              <IconButton size="sm" onClick={breakGroup} title="Break">
-                <Unlink size={14} className="text-red-500" />
+              <IconButton
+                size="sm"
+                onClick={breakGroup}
+                title="Break"
+                className="bg-[#fbfbfd] hover:bg-neutral-100 border border-black/5 outline-none"
+              >
+                <Unlink size={14} strokeWidth={1.5} className="text-red-500" />
               </IconButton>
             </>
           )}
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 scrollbar-hide bg-transparent">
+      <div className="flex-1 overflow-y-auto p-4 hide-scrollbar bg-transparent">
         {decals.length === 0 && (
-          <div className="text-center p-8 bg-neutral-50 rounded-3xl border border-black/5 border-dashed">
-            <span className="text-[10px] font-extrabold text-neutral-400 uppercase tracking-widest">
-              No Layers Yet
+          <div className="text-center p-10 bg-[#fbfbfd] rounded-3xl border border-black/[0.04]">
+            <span className="text-[10px] font-medium text-neutral-400 uppercase tracking-[0.2em]">
+              Canvas is Empty
             </span>
           </div>
         )}
+
         {standalone.map((decal) => renderLayerItem(decal, false))}
+
         {Object.entries(groups).map(([groupId, groupDecals], index) => (
-          <div key={groupId} className="bg-black/5 rounded-[2rem] p-2 mb-4 border border-black/5">
-            <div className="flex items-center gap-2 px-3 py-2 mb-1">
-              <GroupIcon size={14} className="text-neutral-400" />
-              <span className="text-[10px] font-extrabold text-neutral-500 uppercase tracking-widest">
+          <div
+            key={groupId}
+            className="bg-[#fbfbfd] border border-black/[0.04] rounded-3xl p-2.5 mb-5"
+          >
+            <div className="flex items-center gap-2.5 px-3 py-2 mb-2">
+              <GroupIcon size={14} strokeWidth={1.5} className="text-neutral-400 shrink-0" />
+              <span className="text-[10px] font-medium text-neutral-500 uppercase tracking-[0.2em] truncate min-w-0">
                 Group {index + 1}
               </span>
             </div>

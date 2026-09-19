@@ -1,9 +1,10 @@
-import { Decal, Environment, OrbitControls, useGLTF, useTexture } from '@react-three/drei';
+import { Decal, Environment, Html, OrbitControls, useGLTF, useTexture } from '@react-three/drei';
 import { Canvas, createPortal } from '@react-three/fiber';
 import React, { Suspense, useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import tshirtManUrl from '@/assets/models/tshirtman.glb?url';
 import tshirtWomanUrl from '@/assets/models/tshirtwoman.glb?url';
+import { PremiumLoader } from '@/ui/components/PremiumLoader';
 import { type DecalData, generateAssetTexture } from '@/ui/store/editor-store';
 
 const MODELS: Record<string, string> = {
@@ -61,13 +62,22 @@ export function Mini3DViewer({
         <ambientLight intensity={0.6} />
         <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} intensity={1} castShadow />
         <Environment preset="city" />
-        <Suspense fallback={null}>
+
+        {/* PROJECTS THE LOADER DIRECTLY ONTO THE CANVAS */}
+        <Suspense
+          fallback={
+            <Html center>
+              <PremiumLoader fullScreen={false} message="" />
+            </Html>
+          }
+        >
           <ViewerModel
             decals={canvasState as unknown as DecalData[]}
             color={tshirtColor}
             apparelModel={apparelModel}
           />
         </Suspense>
+
         <OrbitControls
           enablePan={false}
           enableZoom={false}
@@ -152,7 +162,6 @@ function ViewerModel({
   if (!primaryMesh) return <primitive object={copiedScene} />;
 
   return (
-    // Restored the default visual scale to match the new geometry base
     <group scale={1.15}>
       <primitive object={copiedScene} />
       {decals.map((decal, index) => (

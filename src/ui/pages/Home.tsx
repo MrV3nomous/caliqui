@@ -1,15 +1,16 @@
-import { ArrowRight, Box, Sparkles } from 'lucide-react';
+import { ArrowRight, Box, LayoutGrid, Sparkles, User as UserIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
 import { env } from '@/shared/env';
+import { AuthModal } from '@/ui/components/AuthModal';
+import { PremiumLoader } from '@/ui/components/PremiumLoader';
+import { useAuthStore } from '@/ui/store/auth-store';
 
-// Dynamically import all images from the strips folder at build time
 const rawImages = import.meta.glob('@/assets/strips/*.{jpg,jpeg,png,webp}', { eager: true });
 const stripImages = Object.values(rawImages).map(
   (module) => (module as { default: string }).default,
 );
 
-// Distribute the images across 6 columns evenly outside the component to keep references stable
 const displayImages = stripImages.length > 0 ? stripImages : Array(36).fill('');
 
 const columnsData = Array.from({ length: 6 }, (_, colIndex) => ({
@@ -24,21 +25,42 @@ displayImages.forEach((img, i) => {
   });
 });
 
-// Double the array for seamless infinite looping, assigning unique IDs to duplicates
 const animatedColumns = columnsData.map((col) => ({
   ...col,
   duplicatedImages: [...col.images, ...col.images.map((img) => ({ ...img, id: `${img.id}-dup` }))],
 }));
 
 export function Home() {
+  const { isAuthenticated, openAuthModal } = useAuthStore();
   const [scrolled, setScrolled] = useState(false);
   const [fomoIndex, setFomoIndex] = useState(0);
+  const [assetsLoaded, setAssetsLoaded] = useState(false);
 
   const fomoMessages = [
     'LIMITED EDITION DROPS AVAILABLE NOW',
     'FREE GLOBAL SHIPPING ON ALL ORDERS',
     'BESPOKE 3D ATELIER NOW OPEN',
   ];
+
+  useEffect(() => {
+    const loadAssets = async () => {
+      if (stripImages.length === 0) {
+        setAssetsLoaded(true);
+        return;
+      }
+      const promises = stripImages.slice(0, 12).map((src) => {
+        return new Promise((resolve) => {
+          const img = new Image();
+          img.src = src;
+          img.onload = resolve;
+          img.onerror = resolve;
+        });
+      });
+      await Promise.all(promises);
+      setAssetsLoaded(true);
+    };
+    loadAssets();
+  }, []);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -57,19 +79,18 @@ export function Home() {
 
   return (
     <div className="w-full min-h-[100dvh] flex flex-col bg-[#fbfbfd] text-black font-sans selection:bg-neutral-300">
-      {/* INJECTED CSS FOR SEAMLESS INFINITE SCROLL */}
       <style>{`
-        @keyframes scroll-up {
-          0% { transform: translateY(0); }
-          100% { transform: translateY(-50%); }
-        }
-        @keyframes scroll-down {
-          0% { transform: translateY(-50%); }
-          100% { transform: translateY(0); }
-        }
+        @keyframes scroll-up { 0% { transform: translateY(0); } 100% { transform: translateY(-50%); } }
+        @keyframes scroll-down { 0% { transform: translateY(-50%); } 100% { transform: translateY(0); } }
         .animate-scroll-up { animation: scroll-up 45s linear infinite; }
         .animate-scroll-down { animation: scroll-down 45s linear infinite; }
       `}</style>
+
+      {/* DYNAMIC ASSET LOADER */}
+      {!assetsLoaded && <PremiumLoader />}
+
+      {/* GLOBAL AUTH MODAL */}
+      <AuthModal />
 
       {/* ROTATING FOMO MARQUEE */}
       <div className="w-full bg-black text-white text-[10px] md:text-xs font-bold tracking-[0.2em] uppercase text-center py-2 relative z-[60]">
@@ -83,7 +104,6 @@ export function Home() {
         </div>
       </div>
 
-      {/* SCROLL-ADAPTIVE HEADER */}
       <header
         className={`fixed w-full z-50 transition-all duration-500 ${
           scrolled
@@ -93,7 +113,6 @@ export function Home() {
       >
         <div className="max-w-[1400px] mx-auto px-6 lg:px-12 flex items-center justify-between">
           <Link to="/" className="hover:opacity-70 transition-opacity outline-none">
-            {/* INVERT LOGO ON DARK BACKGROUND WHEN AT TOP */}
             <img
               src="/logo.png"
               alt={env.VITE_APP_NAME}
@@ -101,10 +120,10 @@ export function Home() {
             />
           </Link>
 
-          <div className="flex items-center gap-6 sm:gap-8">
+          <div className="flex items-center gap-5 sm:gap-8">
             <Link
               to="/marketplace"
-              className={`text-[10px] sm:text-xs font-extrabold uppercase tracking-widest transition-colors outline-none ${
+              className={`text-[10px] sm:text-xs font-extrabold uppercase tracking-widest transition-colors outline-none hidden sm:block ${
                 scrolled ? 'text-neutral-500 hover:text-black' : 'text-white/70 hover:text-white'
               }`}
             >
@@ -112,19 +131,42 @@ export function Home() {
             </Link>
             <Link
               to="/editor"
-              className={`text-[10px] sm:text-xs font-extrabold uppercase tracking-widest transition-colors outline-none ${
+              className={`text-[10px] sm:text-xs font-extrabold uppercase tracking-widest transition-colors outline-none hidden sm:block ${
                 scrolled ? 'text-neutral-500 hover:text-black' : 'text-white/70 hover:text-white'
               }`}
             >
               Studio
             </Link>
+
+            <div
+              className={`w-px h-4 mx-1 sm:mx-0 hidden sm:block ${scrolled ? 'bg-black/10' : 'bg-white/20'}`}
+            />
+
+            {isAuthenticated ? (
+              <Link
+                to="/dashboard"
+                className={`text-[10px] sm:text-xs font-bold uppercase tracking-widest transition-colors flex items-center gap-1.5 outline-none ${
+                  scrolled ? 'text-neutral-500 hover:text-black' : 'text-white/70 hover:text-white'
+                }`}
+              >
+                <LayoutGrid size={14} /> <span className="hidden sm:block">Dashboard</span>
+              </Link>
+            ) : (
+              <button
+                type="button"
+                onClick={openAuthModal}
+                className={`text-[10px] sm:text-xs font-bold uppercase tracking-widest transition-colors flex items-center gap-1.5 outline-none ${
+                  scrolled ? 'text-neutral-500 hover:text-black' : 'text-white/70 hover:text-white'
+                }`}
+              >
+                <UserIcon size={14} /> Sign In
+              </button>
+            )}
           </div>
         </div>
       </header>
 
-      {/* HERO SECTION - THE SCROLLING STRIPS GRID */}
       <section className="relative w-full h-[100dvh] bg-[#0a0a0a] flex items-center justify-center overflow-hidden">
-        {/* Animated Background Grid */}
         <div className="absolute inset-0 w-[110%] -left-[5%] grid grid-cols-3 md:grid-cols-6 gap-3 md:gap-5 opacity-40 rotate-[-2deg] scale-110 pointer-events-none">
           {animatedColumns.map((col, i) => (
             <div
@@ -156,7 +198,6 @@ export function Home() {
           ))}
         </div>
 
-        {/* Heavy Vignette & Dark Overlay for text legibility */}
         <div className="absolute inset-0 bg-gradient-to-b from-black/90 via-black/40 to-black/90 pointer-events-none" />
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_transparent_0%,_#0a0a0a_100%)] opacity-80 pointer-events-none" />
 
@@ -198,7 +239,6 @@ export function Home() {
         </div>
       </section>
 
-      {/* THE STUDIO HIGHLIGHT (WHITE THEME) */}
       <section className="flex-1 py-24 lg:py-40 px-6 lg:px-12 max-w-[1400px] w-full mx-auto grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
         <div className="order-2 lg:order-1 aspect-square bg-neutral-100 rounded-[3rem] overflow-hidden relative shadow-inner border border-black/5 flex items-center justify-center">
           <div className="absolute inset-0 bg-gradient-to-br from-neutral-50 to-neutral-200" />
@@ -233,7 +273,6 @@ export function Home() {
         </div>
       </section>
 
-      {/* THE COLLECTION HIGHLIGHT (LIGHT GRAY THEME) */}
       <section className="py-24 lg:py-40 bg-[#f5f5f7] px-6 lg:px-12">
         <div className="max-w-[1400px] mx-auto">
           <div className="flex flex-col md:flex-row justify-between items-end gap-8 mb-16">

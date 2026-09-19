@@ -84,10 +84,8 @@ export function CheckoutPage() {
   };
 
   return (
-    <div className="w-full h-[100dvh] bg-[#fbfbfd] text-black font-sans flex flex-col selection:bg-neutral-200 overflow-hidden">
-      <style>{`
-        .hide-scrollbar::-webkit-scrollbar { display: none; }
-      `}</style>
+    <div className="w-full h-[100dvh] bg-[#fbfbfd] text-black font-sans flex flex-col selection:bg-neutral-200 overflow-hidden relative">
+      <style>{`.hide-scrollbar::-webkit-scrollbar { display: none; }`}</style>
 
       <header className="h-16 md:h-20 bg-white/80 backdrop-blur-xl border-b border-black/5 flex items-center justify-between px-4 md:px-8 lg:px-16 shrink-0 z-50">
         <button

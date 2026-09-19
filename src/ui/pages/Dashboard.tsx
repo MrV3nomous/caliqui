@@ -18,6 +18,7 @@ import { Link, Navigate, useNavigate } from 'react-router';
 import { env } from '@/shared/env';
 import { supabase } from '@/shared/lib/supabase';
 import { Mini3DViewer } from '@/ui/components/Mini3DViewer';
+import { PremiumLoader } from '@/ui/components/PremiumLoader';
 import { Input, Label } from '@/ui/design-system';
 import { useAuthStore } from '@/ui/store/auth-store';
 import { type ShippingAddress, useCheckoutStore } from '@/ui/store/checkout-store';
@@ -201,6 +202,11 @@ export function Dashboard() {
     await supabase.from('profiles').update({ saved_addresses: updated }).eq('id', profile.id);
   };
 
+  const handleSignOut = async () => {
+    await logout();
+    navigate('/');
+  };
+
   const formatDate = (isoString: string) => {
     return new Date(isoString).toLocaleDateString('en-US', {
       year: 'numeric',
@@ -210,11 +216,7 @@ export function Dashboard() {
   };
 
   if (isLoading) {
-    return (
-      <div className="w-full h-[100dvh] flex items-center justify-center bg-[#fbfbfd]">
-        <Loader2 size={32} className="animate-spin text-neutral-300" />
-      </div>
-    );
+    return <PremiumLoader />;
   }
 
   if (!profile) return <Navigate to="/marketplace" replace />;
@@ -227,17 +229,19 @@ export function Dashboard() {
 
       {/* QUICK ADD TO CART MODAL */}
       {selectedDesign && (
-        // biome-ignore lint/a11y/useKeyWithClickEvents: Modal backdrop overlay
-        // biome-ignore lint/a11y/noStaticElementInteractions: Modal backdrop overlay
-        <div
-          className="fixed inset-0 z-[500] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in"
-          onClick={() => setSelectedDesign(null)}
-        >
-          {/* biome-ignore lint/a11y/useKeyWithClickEvents: Modal content container */}
-          {/* biome-ignore lint/a11y/noStaticElementInteractions: Modal content container */}
+        <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 animate-in fade-in">
+          {/* Accessible Semantic Backdrop */}
+          <button
+            type="button"
+            aria-label="Close modal"
+            className="absolute inset-0 w-full h-full bg-black/40 backdrop-blur-sm outline-none cursor-default border-0 p-0 m-0"
+            onClick={() => setSelectedDesign(null)}
+          />
+          {/* Dialog Content */}
           <div
-            className="bg-white rounded-[2rem] p-6 sm:p-8 w-full max-w-sm shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            className="relative z-10 bg-white rounded-[2rem] p-6 sm:p-8 w-full max-w-sm shadow-2xl"
           >
             <div className="flex justify-between items-center mb-6">
               <h3 className="font-extrabold text-xl">Select Sizes</h3>
@@ -283,7 +287,7 @@ export function Dashboard() {
               type="button"
               onClick={confirmAddToCart}
               disabled={totalQty === 0 || isAdding}
-              className="w-full h-14 bg-black hover:bg-neutral-800 disabled:bg-neutral-300 text-white rounded-xl font-extrabold flex items-center justify-center transition-all shadow-[0_8px_20px_rgba(0,0,0,0.12)]"
+              className="w-full h-14 bg-black hover:bg-neutral-800 disabled:bg-neutral-300 text-white rounded-xl font-extrabold flex items-center justify-center transition-all shadow-[0_8px_20px_rgba(0,0,0,0.12)] outline-none"
             >
               {isAdding ? (
                 <span className="flex items-center gap-2">
@@ -336,7 +340,7 @@ export function Dashboard() {
 
           <button
             type="button"
-            onClick={logout}
+            onClick={handleSignOut}
             className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-red-400 hover:text-red-600 transition-colors sm:ml-2 flex items-center gap-1.5 outline-none"
           >
             <LogOut size={14} className="hidden sm:block" /> Sign Out

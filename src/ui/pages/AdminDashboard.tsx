@@ -14,6 +14,8 @@ import {
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { env } from '@/shared/env';
+import { Mini3DViewer } from '@/ui/components/Mini3DViewer';
+import { PremiumLoader } from '@/ui/components/PremiumLoader';
 import { Input, Label } from '@/ui/design-system';
 import { useAdminStore } from '@/ui/store/admin-store';
 
@@ -135,11 +137,7 @@ export function AdminDashboard() {
   };
 
   if (isLoading || isAdmin === null) {
-    return (
-      <div className="w-full h-[100dvh] flex items-center justify-center bg-[#fbfbfd]">
-        <Loader2 size={32} className="animate-spin text-neutral-300" />
-      </div>
-    );
+    return <PremiumLoader />;
   }
 
   if (!isAdmin) return null;
@@ -530,13 +528,20 @@ export function AdminDashboard() {
                             key={design.id}
                             type="button"
                             onClick={() => setCmsSelectedDesignId(design.id)}
-                            className={`aspect-square rounded-2xl overflow-hidden border-2 cursor-pointer transition-all outline-none ${cmsSelectedDesignId === design.id ? 'border-black' : 'border-transparent opacity-60 hover:opacity-100 bg-neutral-100'}`}
+                            className={`relative aspect-square rounded-2xl overflow-hidden border-2 cursor-pointer transition-all outline-none ${cmsSelectedDesignId === design.id ? 'border-black' : 'border-transparent opacity-60 hover:opacity-100 bg-neutral-100'}`}
                           >
-                            <img
-                              src={design.thumbnail_url}
-                              alt="design"
-                              className="w-full h-full object-cover mix-blend-multiply"
-                            />
+                            {/* Disabled pointer events on the 3D Viewer wrapper so clicks trigger the parent button instead of 3D panning */}
+                            <div className="absolute inset-0 pointer-events-none">
+                              <Mini3DViewer
+                                canvasState={design.canvas_state as Record<string, unknown>[]}
+                                tshirtColor={design.tshirt_color}
+                                fallbackImage={design.thumbnail_url}
+                                apparelModel={
+                                  (design as { apparel_model?: string }).apparel_model ||
+                                  'tshirtman'
+                                }
+                              />
+                            </div>
                           </button>
                         ))}
                       </div>

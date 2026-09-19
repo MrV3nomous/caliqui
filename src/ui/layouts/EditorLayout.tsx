@@ -22,6 +22,7 @@ import { AuthModal } from '@/ui/components/AuthModal';
 import { ContextMenu } from '@/ui/components/ContextMenu';
 import { DrawingWorkspace } from '@/ui/components/DrawingWorkspace';
 import { LayersPanel } from '@/ui/components/LayersPanel';
+import { PremiumLoader } from '@/ui/components/PremiumLoader';
 import { Preview3D } from '@/ui/components/Preview3D';
 import { Toolbar } from '@/ui/components/Toolbar';
 import { Workspace } from '@/ui/components/Workspace';
@@ -198,37 +199,27 @@ export function EditorLayout() {
         }
       `}</style>
 
-      {/* BOOTSTRAP INITIALIZATION OVERLAY */}
-      {isInitializing && (
-        <div className="fixed inset-0 z-[1000] bg-[#fbfbfd] flex flex-col items-center justify-center animate-out fade-out duration-500">
-          <img
-            src="/logo.png"
-            alt={env.VITE_APP_NAME}
-            className="h-8 mb-6 animate-pulse opacity-50 drop-shadow-sm"
-          />
-          <Loader2 size={24} className="animate-spin text-black" />
-          <p className="text-[10px] font-extrabold text-neutral-400 uppercase tracking-widest mt-6">
-            Initializing Studio
-          </p>
-        </div>
-      )}
+      {/* DYNAMIC INITIALIZATION LOADER */}
+      {isInitializing && <PremiumLoader />}
 
       <ContextMenu />
       <AuthModal />
 
       {/* CUSTOM RESET CANVAS MODAL */}
       {isResetModalOpen && (
-        // biome-ignore lint/a11y/useKeyWithClickEvents: Modal backdrop overlay
-        // biome-ignore lint/a11y/noStaticElementInteractions: Modal backdrop overlay
-        <div
-          className="fixed inset-0 z-[600] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in"
-          onClick={() => setIsResetModalOpen(false)}
-        >
-          {/* biome-ignore lint/a11y/useKeyWithClickEvents: Modal content container */}
-          {/* biome-ignore lint/a11y/noStaticElementInteractions: Modal content container */}
+        <div className="fixed inset-0 z-[600] flex items-center justify-center p-4 animate-in fade-in">
+          {/* Accessible Semantic Backdrop */}
+          <button
+            type="button"
+            aria-label="Close modal"
+            className="absolute inset-0 w-full h-full bg-black/40 backdrop-blur-sm outline-none cursor-default border-0 p-0 m-0"
+            onClick={() => setIsResetModalOpen(false)}
+          />
+          {/* Dialog Content */}
           <div
-            className="bg-white rounded-[2rem] p-6 sm:p-8 w-full max-w-sm shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            className="relative z-10 bg-white rounded-[2rem] p-6 sm:p-8 w-full max-w-sm shadow-2xl"
           >
             <h3 className="font-extrabold text-xl mb-2">Start Fresh?</h3>
             <p className="text-neutral-500 font-medium text-sm mb-8">
@@ -257,17 +248,19 @@ export function EditorLayout() {
 
       {/* SIZE SELECTION & ADD TO CART MODAL */}
       {isOrderModalOpen && (
-        // biome-ignore lint/a11y/useKeyWithClickEvents: Modal backdrop overlay
-        // biome-ignore lint/a11y/noStaticElementInteractions: Modal backdrop overlay
-        <div
-          className="fixed inset-0 z-[500] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in"
-          onClick={() => setIsOrderModalOpen(false)}
-        >
-          {/* biome-ignore lint/a11y/useKeyWithClickEvents: Modal content container */}
-          {/* biome-ignore lint/a11y/noStaticElementInteractions: Modal content container */}
+        <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 animate-in fade-in">
+          {/* Accessible Semantic Backdrop */}
+          <button
+            type="button"
+            aria-label="Close modal"
+            className="absolute inset-0 w-full h-full bg-black/40 backdrop-blur-sm outline-none cursor-default border-0 p-0 m-0"
+            onClick={() => setIsOrderModalOpen(false)}
+          />
+          {/* Dialog Content */}
           <div
-            className="bg-white rounded-[2rem] p-6 sm:p-8 w-full max-w-sm shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            className="relative z-10 bg-white rounded-[2rem] p-6 sm:p-8 w-full max-w-sm shadow-2xl"
           >
             <div className="flex justify-between items-center mb-6">
               <h3 className="font-extrabold text-xl">Select Sizes</h3>
@@ -313,7 +306,7 @@ export function EditorLayout() {
               type="button"
               onClick={confirmAddToCart}
               disabled={totalQty === 0 || isAdding}
-              className="w-full h-14 bg-black hover:bg-neutral-800 disabled:bg-neutral-300 text-white rounded-xl font-extrabold flex items-center justify-center transition-all shadow-[0_8px_20px_rgba(0,0,0,0.12)]"
+              className="w-full h-14 bg-black hover:bg-neutral-800 disabled:bg-neutral-300 text-white rounded-xl font-extrabold flex items-center justify-center transition-all shadow-[0_8px_20px_rgba(0,0,0,0.12)] outline-none"
             >
               {isAdding ? (
                 <span className="flex items-center gap-2">
@@ -385,7 +378,6 @@ export function EditorLayout() {
 
       {/* SEAMLESS LUXURY STUDIO HEADER */}
       <header className="h-16 w-full bg-[#fbfbfd]/80 backdrop-blur-2xl border-b border-black/[0.04] flex items-center justify-between px-3 sm:px-6 z-40 shrink-0 select-none gap-2">
-        {/* LEFT: Logo & Store Navigation */}
         <div className="flex items-center gap-1 sm:gap-3 shrink-0">
           <Link
             to="/"
@@ -442,10 +434,8 @@ export function EditorLayout() {
           )}
         </div>
 
-        {/* RIGHT: Unified Studio Suite (8. Rename, 2. New, 3. Save, 4. Add to Cart) */}
         <div className="flex items-center gap-1.5 shrink-0 min-w-0">
           <div className="flex items-center bg-white border border-black/5 rounded-full p-1 shadow-sm max-w-full">
-            {/* 8. Rename Option */}
             <div className="relative flex items-center px-2 min-w-0">
               <input
                 type="text"
@@ -462,7 +452,6 @@ export function EditorLayout() {
 
             <div className="w-px h-4 bg-black/10 mx-0.5 shrink-0" />
 
-            {/* 2. New Design */}
             <button
               type="button"
               onClick={() => setIsResetModalOpen(true)}
@@ -473,7 +462,6 @@ export function EditorLayout() {
               <span className="hidden md:inline">New</span>
             </button>
 
-            {/* 3. Save Design */}
             <button
               type="button"
               onClick={handleManualSave}
@@ -491,7 +479,6 @@ export function EditorLayout() {
               <span className="hidden md:inline">Save</span>
             </button>
 
-            {/* 4. Add to Cart */}
             <button
               type="button"
               onClick={handleOrderIntent}
@@ -503,7 +490,6 @@ export function EditorLayout() {
             </button>
           </div>
 
-          {/* Settings / Layers Dock Toggle on Mobile */}
           <IconButton
             className="lg:hidden bg-white border border-black/5 rounded-full shrink-0 w-9 h-9 shadow-sm outline-none ml-0.5"
             onClick={() => setShowRightDock(!showRightDock)}
@@ -514,14 +500,13 @@ export function EditorLayout() {
         </div>
       </header>
 
-      {/* HORIZONTAL BOTTOM DOCK (Unified Toolbar with Scrollbar Removed) */}
+      {/* HORIZONTAL BOTTOM DOCK */}
       <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-40 flex justify-center pointer-events-none w-[95vw] md:w-auto">
         <div className="bg-white/90 backdrop-blur-2xl shadow-[0_20px_60px_rgba(0,0,0,0.08)] border border-black/5 rounded-[2rem] p-1.5 pointer-events-auto max-w-full overflow-x-auto hide-scrollbar">
           <Toolbar />
         </div>
       </div>
 
-      {/* UNIVERSAL RIGHT DOCK TOGGLE */}
       {!showRightDock && (
         <button
           type="button"
@@ -533,7 +518,6 @@ export function EditorLayout() {
         </button>
       )}
 
-      {/* UNIVERSAL LEFT DOCK TOGGLE (Apparel Switcher) */}
       {!showLeftDock && (
         <button
           type="button"
@@ -545,12 +529,11 @@ export function EditorLayout() {
         </button>
       )}
 
-      {/* BACKDROPS FOR MOBILE/TABLET */}
       {(showRightDock || showLeftDock) && (
-        // biome-ignore lint/a11y/useKeyWithClickEvents: Mobile overlay backdrop
-        // biome-ignore lint/a11y/noStaticElementInteractions: Mobile overlay backdrop
-        <div
-          className="lg:hidden absolute inset-0 bg-black/10 z-40 backdrop-blur-sm transition-opacity animate-in fade-in"
+        <button
+          type="button"
+          aria-label="Close panels"
+          className="lg:hidden absolute inset-0 w-full h-full bg-black/10 z-40 backdrop-blur-sm transition-opacity animate-in fade-in outline-none cursor-default border-0 p-0 m-0"
           onClick={() => {
             setShowRightDock(false);
             setShowLeftDock(false);
@@ -558,7 +541,6 @@ export function EditorLayout() {
         />
       )}
 
-      {/* LEFT DOCK: Apparel Switcher */}
       <div
         className={`absolute top-0 left-0 h-full w-[280px] z-50 p-0 lg:p-4 lg:pt-20 transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] pointer-events-none ${showLeftDock ? 'translate-x-0' : '-translate-x-full'}`}
       >
@@ -590,7 +572,6 @@ export function EditorLayout() {
         </div>
       </div>
 
-      {/* RIGHT DOCK: Unified Layers & Properties */}
       <div
         className={`absolute top-0 right-0 h-full w-[320px] lg:w-[360px] z-50 p-0 lg:p-4 lg:pt-20 transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] pointer-events-none ${showRightDock ? 'translate-x-0' : 'translate-x-full'}`}
       >

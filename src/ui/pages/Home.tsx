@@ -85,7 +85,7 @@ export function Home() {
   }, [fomoMessages.length]);
 
   return (
-    <div className="w-full min-h-[100dvh] flex flex-col bg-white text-black font-sans selection:bg-neutral-200 overflow-x-hidden">
+    <div className="w-full min-h-dvh flex flex-col bg-white text-black font-sans selection:bg-neutral-200 overflow-x-hidden select-none">
       <style>{`
         @keyframes scroll-up { 0% { transform: translateY(0); } 100% { transform: translateY(-50%); } }
         @keyframes scroll-down { 0% { transform: translateY(-50%); } 100% { transform: translateY(0); } }
@@ -102,7 +102,7 @@ export function Home() {
       <AuthModal />
 
       {/* ROTATING EDITORIAL BANNER */}
-      <div className="w-full bg-black text-white text-[9px] md:text-[10px] font-medium tracking-[0.2em] uppercase text-center py-2.5 relative z-[60]">
+      <div className="w-full bg-black text-white text-[9px] md:text-[10px] font-medium tracking-[0.2em] uppercase text-center py-2.5 relative z-60">
         <div className="max-w-[1600px] mx-auto px-6 overflow-hidden relative">
           <span
             key={fomoIndex}
@@ -117,7 +117,7 @@ export function Home() {
       <header
         className={`fixed w-full z-50 transition-all duration-500 ${
           scrolled
-            ? 'top-0 bg-white/95 backdrop-blur-md border-b border-black/[0.04] py-4 shadow-[0_4px_20px_rgba(0,0,0,0.01)]'
+            ? 'top-0 bg-white/95 backdrop-blur-md border-b border-black/4 py-4 shadow-[0_4px_20px_rgba(0,0,0,0.01)]'
             : 'top-8 bg-transparent py-6'
         }`}
       >
@@ -183,7 +183,7 @@ export function Home() {
               <ShoppingBag size={20} strokeWidth={1.2} />
               {totalCartItems > 0 && (
                 <span
-                  className={`absolute -top-1.5 -right-2 text-[9px] font-bold min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center border-[2px] shadow-sm ${
+                  className={`absolute -top-1.5 -right-2 text-[9px] font-bold min-w-4.5 h-4.5 px-1 rounded-full flex items-center justify-center border-2 shadow-sm ${
                     scrolled
                       ? 'bg-black text-white border-white'
                       : 'bg-white text-black border-black/20'
@@ -198,9 +198,9 @@ export function Home() {
       </header>
 
       {/* EDITORIAL HERO SECTION */}
-      <section className="relative w-full h-[100dvh] bg-[#050505] flex items-center justify-center overflow-hidden">
+      <section className="relative w-full h-dvh bg-[#050505] flex items-center justify-center overflow-hidden">
         {/* Subdued, slower background animation */}
-        <div className="absolute inset-0 w-[110%] -left-[5%] grid grid-cols-3 md:grid-cols-6 gap-2 md:gap-4 opacity-30 rotate-[-1deg] scale-110 pointer-events-none">
+        <div className="absolute inset-0 w-[110%] left-[-5%] grid grid-cols-3 md:grid-cols-6 gap-2 md:gap-4 opacity-30 -rotate-1 scale-110 pointer-events-none">
           {animatedColumns.map((col, i) => (
             <div
               key={col.id}
@@ -212,7 +212,7 @@ export function Home() {
                 {col.duplicatedImages.map((imgObj) => (
                   <div
                     key={imgObj.id}
-                    className="w-full aspect-[3/4] bg-neutral-900 rounded-sm overflow-hidden shrink-0 shadow-lg mb-2 md:mb-4"
+                    className="w-full aspect-3/4 bg-neutral-900 rounded-sm overflow-hidden shrink-0 shadow-lg mb-2 md:mb-4"
                   >
                     {imgObj.src ? (
                       <img
@@ -231,16 +231,16 @@ export function Home() {
           ))}
         </div>
 
-        <div className="absolute inset-0 bg-gradient-to-b from-black/80 via-black/30 to-black/90 pointer-events-none" />
+        <div className="absolute inset-0 bg-linear-to-b from-black/80 via-black/30 to-black/90 pointer-events-none" />
 
-        <div className="relative z-10 max-w-[1200px] w-full px-6 flex flex-col items-center text-center animate-in fade-in slide-in-from-bottom-8 duration-1000 mt-12">
+        <div className="relative z-10 max-w-300 w-full px-6 flex flex-col items-center text-center animate-in fade-in slide-in-from-bottom-8 duration-1000 mt-12">
           <span className="text-white/50 text-[9px] md:text-[10px] font-medium uppercase tracking-[0.4em] mb-6">
             Welcome to {env.VITE_APP_NAME}
           </span>
 
           <h1 className="text-5xl md:text-7xl lg:text-8xl font-light tracking-tight text-white leading-[1.1] mb-6">
             Define Your <br className="hidden md:block" />
-            <span className="font-medium text-transparent bg-clip-text bg-gradient-to-r from-neutral-100 to-neutral-400">
+            <span className="font-medium text-transparent bg-clip-text bg-linear-to-r from-neutral-100 to-neutral-400">
               Aesthetic.
             </span>
           </h1>
@@ -272,7 +272,7 @@ export function Home() {
       {/* THE ATELIER SECTION - Stripped of extreme rotations and heavy borders */}
       <section className="flex-1 py-24 lg:py-40 px-6 lg:px-12 max-w-[1600px] w-full mx-auto grid grid-cols-1 lg:grid-cols-2 gap-16 items-center bg-white">
         <div className="order-2 lg:order-1 aspect-square bg-[#f8f8f8] overflow-hidden relative flex items-center justify-center">
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_#ffffff_0%,_transparent_100%)] opacity-50" />
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,#ffffff_0%,transparent_100%)] opacity-50" />
           <div className="relative z-10 w-2/3 h-2/3 bg-white shadow-[0_20px_60px_rgba(0,0,0,0.04)] flex items-center justify-center transition-transform duration-1000 hover:scale-105">
             <div className="text-center space-y-4">
               <img src="/logo.png" alt="Logo" className="w-12 h-12 mx-auto opacity-30" />
@@ -305,7 +305,7 @@ export function Home() {
       </section>
 
       {/* CURATED COLLECTION SECTION - Clean, sharp edges */}
-      <section className="py-24 lg:py-40 bg-[#fbfbfd] px-6 lg:px-12 border-t border-black/[0.02]">
+      <section className="py-24 lg:py-40 bg-[#fbfbfd] px-6 lg:px-12 border-t border-black/2">
         <div className="max-w-[1600px] mx-auto">
           <div className="flex flex-col md:flex-row justify-between items-end gap-8 mb-16">
             <div className="space-y-4 max-w-xl">
@@ -328,7 +328,7 @@ export function Home() {
             {[1, 2, 3].map((item) => (
               <div
                 key={`teaser-${item}`}
-                className="aspect-[3/4] bg-[#f0f0f0] overflow-hidden group cursor-pointer relative"
+                className="aspect-3/4 bg-[#f0f0f0] overflow-hidden group cursor-pointer relative"
               >
                 {stripImages[item + 5] ? (
                   <img
@@ -347,7 +347,7 @@ export function Home() {
       </section>
 
       {/* EDITORIAL FOOTER */}
-      <footer className="py-16 border-t border-black/[0.04] px-6 lg:px-12 text-center flex flex-col items-center shrink-0 bg-white">
+      <footer className="py-16 border-t border-black/4 px-6 lg:px-12 text-center flex flex-col items-center shrink-0 bg-white">
         <img
           src="/logo.png"
           alt={env.VITE_APP_NAME}

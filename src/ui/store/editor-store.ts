@@ -1,6 +1,7 @@
 import { create } from 'zustand';
-import { supabase } from '@/shared/lib/supabase';
+import { supabase, uploadAssetToStorage } from '@/shared/lib/supabase';
 import { deleteAssetFromDB, getAllAssetsFromDB, saveAssetToDB } from '@/shared/utils/asset-db';
+import { processAndCompressImage } from '@/shared/utils/image-processing';
 
 export type ToolType = 'text' | 'shape' | 'image' | 'drawing';
 
@@ -16,7 +17,6 @@ export type GlobalToolType =
 
 export type CameraView = 'front' | 'back' | 'left' | 'right' | 'top' | 'custom';
 
-// Define the exact string literal types for your 3D models
 export type ApparelModelType = 'tshirtman' | 'tshirtwoman';
 
 export interface BrushSettings {
@@ -58,8 +58,8 @@ export interface DecalData {
   type: ToolType;
   shapeType?: ShapeType;
   name: string;
-  src: string;
-  originalSrc?: string;
+  src?: string; // Made optional so we can strip it from the DB payload
+  originalSrc?: string; // Made optional
   meshName?: string;
   position: [number, number, number];
   rotation: [number, number, number];
@@ -140,7 +140,7 @@ interface EditorState {
   aiFeedbackMessage: string | null;
 
   tshirtColor: string;
-  apparelModel: ApparelModelType; // Added Apparel Model State
+  apparelModel: ApparelModelType;
   cameraView: CameraView;
 
   userAssets: UserAsset[];
@@ -193,7 +193,7 @@ interface EditorState {
   dispatchAiCommand: (prompt: string, targetId?: string) => Promise<void>;
 
   setTshirtColor: (color: string) => void;
-  setApparelModel: (model: ApparelModelType) => void; // Added Setter
+  setApparelModel: (model: ApparelModelType) => void;
   setCameraView: (view: CameraView) => void;
 
   addUserAsset: (blob: Blob, aspectRatio: number) => Promise<string>;
@@ -201,6 +201,8 @@ interface EditorState {
 
   saveDesign: () => Promise<string>;
 }
+
+// --- HELPER FUNCTIONS ---
 
 const hexToRgba = (hex: string, opacityPercent: number) => {
   let c = hex.replace('#', '');
@@ -219,6 +221,22 @@ const applyLineDash = (ctx: CanvasRenderingContext2D, style: string, width: numb
   if (style === 'dashed') ctx.setLineDash([width * 2, width * 2]);
   else if (style === 'dotted') ctx.setLineDash([width, width * 2]);
   else ctx.setLineDash([]);
+};
+
+// STRIP HEAVY DATA: Removes heavy base64 strings before saving to DB or LocalStorage
+export const extractLightweightManifest = (decals: DecalData[]): DecalData[] => {
+  return decals.map((d) => {
+    const blueprint = { ...d };
+    if (blueprint.type === 'text' || blueprint.type === 'shape') {
+      // Shapes and text are purely math. We don't need their base64 images saved at all.
+      delete blueprint.src;
+      delete blueprint.originalSrc;
+    } else if (blueprint.type === 'image' || blueprint.type === 'drawing') {
+      // Images need their cloud URL (originalSrc), but we ditch the filtered base64 composite (src)
+      delete blueprint.src;
+    }
+    return blueprint;
+  });
 };
 
 export const applyImageFilters = (
@@ -680,6 +698,12 @@ export const getDefaultConfig = (_type: ToolType): Partial<DecalData> => ({
   aspectRatio: 1,
 });
 
+// Helper function to convert base64 data: URL to a Blob
+const dataUrlToBlob = async (dataUrl: string): Promise<Blob> => {
+  const res = await fetch(dataUrl);
+  return await res.blob();
+};
+
 export const useEditorStore = create<EditorState>((set, get) => ({
   activeDesignId: null,
   designName: 'Untitled Design',
@@ -795,6 +819,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (initialDecals.length > 0) {
       Promise.all(
         initialDecals.map(async (d) => {
+          // HYDRATION LOGIC: Rebuilding the heavy Base64 strings purely for client-side rendering
           if (d.type === 'shape' || d.type === 'text') {
             const baseSrc = generateAssetTexture(d);
             const { src: finalSrc, aspectRatio } = await applyImageFilters({
@@ -802,6 +827,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               originalSrc: baseSrc,
             });
             return { ...d, src: finalSrc, originalSrc: baseSrc, aspectRatio };
+          } else if (d.type === 'image' || d.type === 'drawing') {
+            const { src: finalSrc, aspectRatio } = await applyImageFilters(d);
+            return { ...d, src: finalSrc, aspectRatio };
           }
           return d;
         }),
@@ -1264,14 +1292,43 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       throw new Error('Must be logged in to save');
     }
 
-    const fullDecals = JSON.parse(JSON.stringify(state.decals));
+    // 1. Deep copy decals to avoid mutating live editor state during processing
+    const processingDecals = JSON.parse(JSON.stringify(state.decals)) as DecalData[];
+
+    // 2. Upload any local base64/blob image assets to Supabase Storage before saving
+    await Promise.all(
+      processingDecals.map(async (decal) => {
+        if ((decal.type === 'image' || decal.type === 'drawing') && decal.originalSrc) {
+          // If the originalSrc is a massive local data URL or blob, we must compress and upload it
+          if (decal.originalSrc.startsWith('data:') || decal.originalSrc.startsWith('blob:')) {
+            try {
+              const blob = await dataUrlToBlob(decal.originalSrc);
+              // Enforce the 90KB strict compression rule
+              const { blob: compressedBlob } = await processAndCompressImage(blob, 90 * 1024);
+
+              const publicUrl = await uploadAssetToStorage(compressedBlob, user.id);
+              if (publicUrl) {
+                // Swap the heavy local data URL for the permanent Supabase URL
+                decal.originalSrc = publicUrl;
+              }
+            } catch (err) {
+              console.error('Failed to compress/upload decal asset during save:', err);
+              // Fallback to storing the raw string if upload fails to prevent data loss
+            }
+          }
+        }
+      }),
+    );
+
+    // 3. NEW: Strip all Base64 Image strings from the payload (Manifest Extraction)
+    const lightweightManifest = extractLightweightManifest(processingDecals);
 
     const designPayload = {
       user_id: user.id,
       name: state.designName || 'Untitled Design',
-      canvas_state: fullDecals as unknown as Record<string, unknown>[],
+      canvas_state: lightweightManifest as unknown as Record<string, unknown>[],
       tshirt_color: state.tshirtColor,
-      apparel_model: state.apparelModel, // Save the selected model to the database
+      apparel_model: state.apparelModel,
       thumbnail_url: 'https://via.placeholder.com/512?text=3D+Model',
     };
 
@@ -1310,12 +1367,15 @@ useEditorStore.subscribe((state) => {
   clearTimeout(saveTimeout);
   saveTimeout = setTimeout(() => {
     try {
+      // Apply Manifest Extraction before saving to prevent crashing the 5MB LocalStorage limit
+      const lightweightManifest = extractLightweightManifest(state.decals);
+
       localStorage.setItem(
         'caliqui_workspace',
         JSON.stringify({
-          decals: state.decals,
+          decals: lightweightManifest,
           tshirtColor: state.tshirtColor,
-          apparelModel: state.apparelModel, // Remember the model choice locally
+          apparelModel: state.apparelModel,
           activeDesignId: state.activeDesignId,
           designName: state.designName,
         }),

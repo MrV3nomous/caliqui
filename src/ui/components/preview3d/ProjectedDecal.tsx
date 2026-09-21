@@ -174,7 +174,7 @@ export function ProjectedDecal({
   }
 
   // FIX 1: Dynamically scale projection depth so huge decals wrap around the curved chest properly
-  const zDepth = 0.7;
+  const zDepth = 0.6;
 
   // FIX 2: Prevent the visual handles from ever collapsing below 0.15
   const MIN_UI_SIZE = 0.15;

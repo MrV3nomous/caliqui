@@ -1,18 +1,38 @@
 import { create } from 'zustand';
 import { supabase } from '@/shared/lib/supabase';
-import type { CartEntry } from './checkout-store';
+
+export interface OrderLineItem {
+  id: string;
+  order_id: string;
+  type: 'custom' | 'marketplace';
+  product_id: string;
+  name: string;
+  price: number;
+  quantity: number;
+  sizes: Record<string, number>;
+  print_file_path?: string | null;
+  shipping_snapshot?: {
+    address: string;
+    phone: string;
+    label: string;
+    customer_name?: string;
+  } | null;
+  status: 'draft' | 'processing' | 'shipped' | 'delivered';
+  courier_name?: string | null;
+  tracking_number?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
 
 export interface GlobalOrder {
   id: string;
   created_at: string;
+  updated_at?: string;
   customer_name: string;
-  total_amount: number;
-  status: 'processing' | 'shipped' | 'delivered' | 'cancelled';
-  courier_name: string | null;
-  tracking_number: string | null;
-  print_file_path: string | null;
+  amount: number;
+  status: 'draft' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
   shipping_snapshot: { address: string; phone: string; label: string };
-  cart: CartEntry[];
+  order_items: OrderLineItem[];
   user_id: string;
 }
 
@@ -46,14 +66,13 @@ interface AdminState {
   isLoading: boolean;
 
   verifyAdminAccess: () => Promise<boolean>;
-  fetchAdminData: () => Promise<void>;
-  updateOrderStatus: (
-    id: string,
-    status: string,
+  fetchAdminData: (background?: boolean) => Promise<void>;
+  updateOrderItemStatus: (
+    itemId: string,
+    status: 'draft' | 'processing' | 'shipped' | 'delivered',
     courier?: string,
     tracking?: string,
   ) => Promise<void>;
-  downloadPrintFile: (path: string) => Promise<void>;
 
   // CMS Methods
   fetchAdminDesigns: () => Promise<void>;
@@ -61,7 +80,7 @@ interface AdminState {
   createMarketplaceItem: (item: NewMarketplaceItem) => Promise<void>;
 }
 
-export const useAdminStore = create<AdminState>((set) => ({
+export const useAdminStore = create<AdminState>((set, get) => ({
   isAdmin: null,
   orders: [],
   adminDesigns: [],
@@ -87,48 +106,76 @@ export const useAdminStore = create<AdminState>((set) => ({
     return isAdmin;
   },
 
-  fetchAdminData: async () => {
-    set({ isLoading: true });
+  fetchAdminData: async (background = false) => {
+    if (!background) set({ isLoading: true });
+
     const { data: orders, error } = await supabase
       .from('orders')
-      .select('*')
+      .select('*, order_items(*)')
       .order('created_at', { ascending: false });
 
     if (!error) set({ orders: orders as GlobalOrder[] });
-    set({ isLoading: false });
+    if (!background) set({ isLoading: false });
   },
 
-  updateOrderStatus: async (id, status, courier, tracking) => {
-    const updates: Partial<GlobalOrder> = { status: status as GlobalOrder['status'] };
-    if (status === 'shipped') {
-      updates.courier_name = courier;
-      updates.tracking_number = tracking;
-    }
+  updateOrderItemStatus: async (itemId, status, courier, tracking) => {
+    // 1. Optimistic Update: Instantly change the UI without waiting for the network
+    const previousOrders = get().orders;
+    set((state) => ({
+      orders: state.orders.map((order) => {
+        let hasChanges = false;
+        const newItems = order.order_items?.map((item) => {
+          if (item.id === itemId) {
+            hasChanges = true;
+            return {
+              ...item,
+              status,
+              courier_name: courier || item.courier_name,
+              tracking_number: tracking || item.tracking_number,
+              updated_at: new Date().toISOString(), // Optimistically update local timestamp
+            };
+          }
+          return item;
+        });
 
-    const { error } = await supabase.from('orders').update(updates).eq('id', id);
+        if (hasChanges) {
+          // Re-calculate the global order status locally
+          const itemsWithStatus = newItems.map((i) => i.status || order.status || 'draft');
+          let globalStatus: GlobalOrder['status'] = 'processing';
+          if (itemsWithStatus.every((s) => s === 'delivered')) globalStatus = 'delivered';
+          else if (itemsWithStatus.every((s) => s === 'shipped' || s === 'delivered'))
+            globalStatus = 'shipped';
+          else if (itemsWithStatus.every((s) => s === 'draft')) globalStatus = 'draft';
+
+          return {
+            ...order,
+            status: globalStatus,
+            order_items: newItems,
+            updated_at: new Date().toISOString(),
+          };
+        }
+        return order;
+      }),
+    }));
+
+    // 2. Database Execution
+    const updates = {
+      status,
+      courier_name: courier || null,
+      tracking_number: tracking || null,
+    };
+
+    const { error } = await supabase.from('order_items').update(updates).eq('id', itemId);
 
     if (!error) {
-      set((state) => ({
-        orders: state.orders.map((o) => (o.id === id ? { ...o, ...updates } : o)),
-      }));
+      // Background re-fetch to ensure sync
+      get().fetchAdminData(true);
     } else {
-      console.error('Failed to update order:', error);
-      alert('Failed to update order. Check permissions.');
+      console.error('Failed to update item status:', error);
+      alert('Failed to update item status. Check permissions.');
+      // Revert optimistic update on failure
+      set({ orders: previousOrders });
     }
-  },
-
-  downloadPrintFile: async (path) => {
-    const { data, error } = await supabase.storage.from('print_files').download(path);
-    if (error) return alert('Could not download print file.');
-
-    const url = URL.createObjectURL(data);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = path.split('/').pop() || 'print_file.png';
-    document.body.appendChild(a);
-    a.click();
-    URL.revokeObjectURL(url);
-    document.body.removeChild(a);
   },
 
   fetchAdminDesigns: async () => {

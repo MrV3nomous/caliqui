@@ -1,6 +1,7 @@
 import { Loader2, RotateCcw, Sparkles } from 'lucide-react';
 import type React from 'react';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
+import { ColorPicker } from '@/ui/components/ColorPicker';
 import { Label } from '@/ui/design-system';
 import {
   applyImageFilters,
@@ -130,68 +131,18 @@ function ColorControl({
   saveHistory: () => void;
 }) {
   const value = (activeDecal[prop.id as keyof DecalData] as string) || '';
-  const safeColorValue = value === 'transparent' || !value ? '#000000' : value;
-  const storeDisplayValue = value === 'transparent' ? 'TRANSPARENT' : safeColorValue;
-
-  const [localText, setLocalText] = useState(storeDisplayValue);
-  const [isFocused, setIsFocused] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const safeColorValue = value === 'transparent' || !value ? 'transparent' : value;
 
   return (
     <div className="space-y-3 min-w-0" key={prop.id}>
       <Label className="text-[9px] font-medium text-neutral-400 uppercase tracking-[0.2em] block m-0">
         {prop.label}
       </Label>
-      <div className="flex gap-3 p-2 bg-[#fbfbfd] border border-black/[0.04] hover:border-black/10 transition-all rounded-2xl items-center">
-        {/* FLAWLESS COLOR PICKER: Hidden input triggered by a pure CSS circle */}
-        <button
-          type="button"
-          onClick={() => inputRef.current?.click()}
-          className="w-8 h-8 rounded-full border border-black/10 shrink-0 shadow-inner relative overflow-hidden outline-none flex items-center justify-center bg-[url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAwAAAAMCAIAAADZF8uwAAAAGUlEQVQYV2M4gwH+YwCGIasIUwhT25BVBADtzYNYnXFmQAAAAABJRU5ErkJggg==')]"
-        >
-          <div
-            className="absolute inset-0"
-            style={{
-              backgroundColor: safeColorValue === 'transparent' ? 'transparent' : safeColorValue,
-            }}
-          />
-          <input
-            ref={inputRef}
-            type="color"
-            value={safeColorValue === 'transparent' ? '#000000' : safeColorValue}
-            onPointerDown={() => saveHistory()}
-            onChange={(e) => updateVisuals({ [prop.id]: e.target.value })}
-            className="opacity-0 absolute inset-0 w-full h-full cursor-pointer"
-          />
-        </button>
-
-        <input
-          type="text"
-          value={isFocused ? localText : storeDisplayValue}
-          onFocus={() => {
-            setLocalText(storeDisplayValue);
-            setIsFocused(true);
-            saveHistory();
-          }}
-          onChange={(e) => setLocalText(e.target.value)}
-          onBlur={() => {
-            setIsFocused(false);
-            let finalColor = localText.trim();
-            if (finalColor.toLowerCase() === 'transparent') {
-              updateVisuals({ [prop.id]: 'transparent' });
-              return;
-            }
-            const ctx = document.createElement('canvas').getContext('2d');
-            if (ctx && finalColor) {
-              ctx.fillStyle = finalColor;
-              finalColor = ctx.fillStyle;
-            }
-            if (finalColor !== value) updateVisuals({ [prop.id]: finalColor });
-          }}
-          onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-          className="flex-1 font-mono uppercase text-[11px] tracking-widest font-medium bg-transparent border-0 text-black px-2 outline-none"
-        />
-      </div>
+      <ColorPicker
+        color={safeColorValue}
+        onChange={(newColor) => updateVisuals({ [prop.id]: newColor })}
+        onPointerDown={() => saveHistory()}
+      />
     </div>
   );
 }

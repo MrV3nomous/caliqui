@@ -1,56 +1,85 @@
 export async function processAndCompressImage(
-  file: File,
+  file: File | Blob,
+  maxSizeBytes = 90 * 1024, // 90KB Target
 ): Promise<{ blob: Blob; aspectRatio: number }> {
   return new Promise((resolve, reject) => {
-    // Create a temporary object URL to read the file into an Image element
     const url = URL.createObjectURL(file);
     const img = new Image();
 
-    img.onload = () => {
-      // Immediately revoke the URL to prevent memory leaks
+    img.onload = async () => {
       URL.revokeObjectURL(url);
 
       let width = img.naturalWidth;
       let height = img.naturalHeight;
       const aspectRatio = width / height;
 
-      // 4K Print Quality Cap - More than enough for pristine 300DPI physical printing
-      const MAX_DIMENSION = 4096;
-
-      if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+      // Aggressive initial downscale if the image is massive
+      const MAX_INITIAL_DIMENSION = 1200;
+      if (width > MAX_INITIAL_DIMENSION || height > MAX_INITIAL_DIMENSION) {
         if (width > height) {
-          width = MAX_DIMENSION;
-          height = MAX_DIMENSION / aspectRatio;
+          width = MAX_INITIAL_DIMENSION;
+          height = MAX_INITIAL_DIMENSION / aspectRatio;
         } else {
-          height = MAX_DIMENSION;
-          width = MAX_DIMENSION * aspectRatio;
+          height = MAX_INITIAL_DIMENSION;
+          width = MAX_INITIAL_DIMENSION * aspectRatio;
         }
       }
 
       const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
       const ctx = canvas.getContext('2d');
 
       if (!ctx) {
         return reject(new Error('Failed to get canvas context'));
       }
 
-      // Draw the image scaled to the new dimensions
-      ctx.drawImage(img, 0, 0, width, height);
+      // Recursive compression function to hit the target size
+      const compressToTarget = async (
+        currentWidth: number,
+        currentHeight: number,
+        quality: number,
+      ): Promise<Blob> => {
+        canvas.width = currentWidth;
+        canvas.height = currentHeight;
 
-      // Convert to WebP for massive file size savings while preserving transparency and quality
-      canvas.toBlob(
-        (blob) => {
-          if (blob) {
-            resolve({ blob, aspectRatio });
-          } else {
-            reject(new Error('Canvas to Blob conversion failed'));
-          }
-        },
-        'image/webp',
-        0.9, // 90% quality compression
-      );
+        // Clear and draw
+        ctx.clearRect(0, 0, currentWidth, currentHeight);
+        ctx.drawImage(img, 0, 0, currentWidth, currentHeight);
+
+        return new Promise<Blob>((resolveBlob, rejectBlob) => {
+          canvas.toBlob(
+            async (blob) => {
+              if (!blob) return rejectBlob(new Error('Conversion failed'));
+
+              if (blob.size <= maxSizeBytes || (currentWidth < 300 && quality <= 0.3)) {
+                // Target hit OR we've shrunk it as much as reasonably possible
+                resolveBlob(blob);
+              } else {
+                // Still too large. Reduce dimensions by 15% and quality slightly
+                const newWidth = Math.max(currentWidth * 0.85, 100);
+                const newHeight = newWidth / aspectRatio;
+                const newQuality = Math.max(quality - 0.1, 0.3);
+
+                try {
+                  const smallerBlob = await compressToTarget(newWidth, newHeight, newQuality);
+                  resolveBlob(smallerBlob);
+                } catch (e) {
+                  rejectBlob(e);
+                }
+              }
+            },
+            'image/webp',
+            quality,
+          );
+        });
+      };
+
+      try {
+        // Start compression loop at high quality
+        const finalBlob = await compressToTarget(width, height, 0.85);
+        resolve({ blob: finalBlob, aspectRatio });
+      } catch (err) {
+        reject(err);
+      }
     };
 
     img.onerror = () => {

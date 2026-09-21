@@ -1,8 +1,6 @@
 import { create } from 'zustand';
 import { env } from '@/shared/env';
 import { supabase } from '@/shared/lib/supabase';
-import { generatePrintFile } from '@/shared/utils/export-engine';
-import type { DecalData } from '@/ui/store/editor-store';
 
 export interface ShippingAddress {
   id: string;
@@ -19,10 +17,34 @@ export interface CartEntry {
   name: string;
   thumbnail: string | null;
   price: number;
+  originalPrice?: number;
+  discountPercentage?: number;
   sizes: Record<string, number>;
+  collection?: string;
   canvasState?: Record<string, unknown>[];
   tshirtColor?: string;
   apparelModel?: string;
+}
+
+export interface FreshMarketplaceItem {
+  id: string;
+  name: string;
+  price: number;
+  collection: string | null;
+  discount_percentage: number | null;
+  thumbnail_url: string | null;
+  canvas_state: unknown | null;
+  tshirt_color: string | null;
+  apparel_model: string | null;
+}
+
+export interface FreshCustomItem {
+  id: string;
+  name: string | null;
+  thumbnail_url: string | null;
+  canvas_state: unknown | null;
+  tshirt_color: string | null;
+  apparel_model: string | null;
 }
 
 interface RazorpayOptions {
@@ -52,16 +74,20 @@ declare global {
 interface CheckoutState {
   cart: CartEntry[];
   savedAddresses: ShippingAddress[];
-  orderStatus: 'idle' | 'processing' | 'success';
+  orderStatus: 'idle' | 'processing' | 'success' | 'failed';
+  lastOrderId: string | null;
 
   addToCart: (entry: Omit<CartEntry, 'cartId' | 'sizes'>) => void;
   updateCartItemQuantity: (cartId: string, size: string, delta: number) => void;
   removeFromCart: (cartId: string) => void;
   clearCart: () => void;
+  setOrderStatus: (status: 'idle' | 'processing' | 'success' | 'failed') => void;
 
+  fetchAddresses: () => Promise<void>;
+  syncCart: () => Promise<void>;
   initCheckout: (type: 'custom' | 'marketplace', id?: string) => Promise<void>;
   addAddress: (newAddr: Omit<ShippingAddress, 'id'>) => Promise<ShippingAddress | null>;
-  processPayment: (addressObj: ShippingAddress, saveAddress: boolean) => Promise<void>;
+  processPayment: (itemAddressIds: Record<string, string>) => Promise<void>;
 }
 
 const loadRazorpayScript = () =>
@@ -74,7 +100,6 @@ const loadRazorpayScript = () =>
     document.body.appendChild(script);
   });
 
-// Load persistent cart
 let initialCart: CartEntry[] = [];
 try {
   if (typeof window !== 'undefined') {
@@ -89,17 +114,19 @@ export const useCheckoutStore = create<CheckoutState>((set, get) => ({
   cart: initialCart,
   savedAddresses: [],
   orderStatus: 'idle',
+  lastOrderId: null,
+
+  setOrderStatus: (status) => set({ orderStatus: status }),
 
   addToCart: (entry) => {
     set((state) => {
-      // Prevent exact duplicates, just navigate if already in cart
       const exists = state.cart.find((c) => c.productId === entry.productId);
       if (exists) return state;
 
       const newEntry: CartEntry = {
         ...entry,
         cartId: crypto.randomUUID(),
-        sizes: { S: 0, M: 1, L: 0, XL: 0, XXL: 0 },
+        sizes: { XS: 0, S: 0, M: 1, L: 0, XL: 0, XXL: 0 },
       };
       return { cart: [newEntry, ...state.cart] };
     });
@@ -126,54 +153,176 @@ export const useCheckoutStore = create<CheckoutState>((set, get) => ({
 
   clearCart: () => set({ cart: [] }),
 
-  initCheckout: async (type, id) => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+  fetchAddresses: async () => {
+    try {
+      const {
+        data: { user },
+        error: authErr,
+      } = await supabase.auth.getUser();
+      if (authErr || !user) return;
 
-    if (user) {
-      const { data: profile } = await supabase
+      const { data: profile, error: profileErr } = await supabase
         .from('profiles')
-        .select('saved_addresses, default_shipping_address, full_name, phone')
+        .select('saved_addresses, default_shipping_address, full_name')
         .eq('id', user.id)
         .single();
 
+      if (profileErr) {
+        console.error('Failed to fetch profile addresses:', profileErr);
+        return;
+      }
+
       if (profile) {
-        let addresses: ShippingAddress[] = profile.saved_addresses || [];
+        let addresses: ShippingAddress[] = [];
+
+        if (profile.saved_addresses) {
+          if (Array.isArray(profile.saved_addresses)) {
+            addresses = profile.saved_addresses;
+          } else if (typeof profile.saved_addresses === 'string') {
+            try {
+              addresses = JSON.parse(profile.saved_addresses);
+            } catch (e) {
+              console.error('Failed to parse saved_addresses JSON', e);
+            }
+          }
+        }
+
         if (addresses.length === 0 && profile.default_shipping_address?.address) {
           addresses = [
             {
               id: crypto.randomUUID(),
               label: 'Home',
               fullName: profile.full_name || '',
-              phone: profile.phone || '',
+              phone: '',
               address: profile.default_shipping_address.address,
             },
           ];
         }
+
         set({ savedAddresses: addresses });
       }
+    } catch (err) {
+      console.error('Unexpected error fetching addresses:', err);
+    }
+  },
 
-      // If triggered from the Editor's "Order" button
-      if (type === 'custom' && id) {
-        const { data: design } = await supabase
+  syncCart: async () => {
+    const { cart } = get();
+
+    const marketplaceIds = cart.filter((c) => c.type === 'marketplace').map((c) => c.productId);
+    const customIds = cart.filter((c) => c.type === 'custom').map((c) => c.productId);
+
+    let freshMarketplace: FreshMarketplaceItem[] = [];
+    let freshCustom: FreshCustomItem[] = [];
+
+    try {
+      if (marketplaceIds.length > 0) {
+        const { data } = await supabase
+          .from('marketplace_items')
+          .select(
+            'id, name, price, collection, discount_percentage, thumbnail_url, canvas_state, tshirt_color, apparel_model',
+          )
+          .in('id', marketplaceIds);
+        if (data) freshMarketplace = data as FreshMarketplaceItem[];
+      }
+
+      if (customIds.length > 0) {
+        const { data } = await supabase
           .from('designs')
-          .select('name, thumbnail_url, canvas_state, tshirt_color, apparel_model')
-          .eq('id', id)
-          .single();
+          .select('id, name, thumbnail_url, canvas_state, tshirt_color, apparel_model')
+          .in('id', customIds);
+        if (data) freshCustom = data as FreshCustomItem[];
+      }
 
-        if (design) {
-          get().addToCart({
-            type: 'custom',
-            productId: id,
-            name: design.name || 'Custom Studio Design',
-            thumbnail: design.thumbnail_url,
-            canvasState: design.canvas_state as Record<string, unknown>[],
-            tshirtColor: design.tshirt_color || '#ffffff',
-            apparelModel: design.apparel_model || 'tshirtman',
-            price: 1499 + (design.canvas_state?.length || 0) * 150,
-          });
-        }
+      set((state) => ({
+        cart: state.cart.map((cartItem) => {
+          if (cartItem.type === 'marketplace') {
+            const fresh = freshMarketplace.find((d) => d.id === cartItem.productId);
+            if (!fresh) return cartItem;
+
+            const discount = fresh.discount_percentage || 0;
+            const currentPrice = discount > 0 ? fresh.price * (1 - discount / 100) : fresh.price;
+
+            return {
+              ...cartItem,
+              name: fresh.name,
+              collection: fresh.collection || 'Core Collection',
+              thumbnail: fresh.thumbnail_url,
+              price: Math.round(currentPrice),
+              originalPrice: fresh.price,
+              discountPercentage: discount,
+              canvasState: fresh.canvas_state as Record<string, unknown>[],
+              tshirtColor: fresh.tshirt_color || '#ffffff',
+              apparelModel: fresh.apparel_model || 'tshirtman',
+            };
+          } else {
+            const fresh = freshCustom.find((d) => d.id === cartItem.productId);
+            if (!fresh) return cartItem;
+            return {
+              ...cartItem,
+              name: fresh.name || 'Custom Studio Design',
+              thumbnail: fresh.thumbnail_url,
+              canvasState: fresh.canvas_state as Record<string, unknown>[],
+              tshirtColor: fresh.tshirt_color || '#ffffff',
+              apparelModel: fresh.apparel_model || 'tshirtman',
+              price:
+                1499 + (Array.isArray(fresh.canvas_state) ? fresh.canvas_state.length : 0) * 150,
+            };
+          }
+        }),
+      }));
+    } catch (error) {
+      console.error('Failed to sync cart data:', error);
+    }
+  },
+
+  initCheckout: async (type, id) => {
+    if (type === 'custom' && id) {
+      const { data: design } = await supabase
+        .from('designs')
+        .select('name, thumbnail_url, canvas_state, tshirt_color, apparel_model')
+        .eq('id', id)
+        .single();
+
+      if (design) {
+        get().addToCart({
+          type: 'custom',
+          productId: id,
+          name: design.name || 'Custom Studio Design',
+          collection: 'Studio Custom',
+          thumbnail: design.thumbnail_url,
+          canvasState: design.canvas_state as Record<string, unknown>[],
+          tshirtColor: design.tshirt_color || '#ffffff',
+          apparelModel: design.apparel_model || 'tshirtman',
+          price: 1499 + (design.canvas_state?.length || 0) * 150,
+        });
+      }
+    } else if (type === 'marketplace' && id) {
+      const { data: item } = await supabase
+        .from('marketplace_items')
+        .select(
+          'name, thumbnail_url, price, collection, discount_percentage, canvas_state, tshirt_color, apparel_model',
+        )
+        .eq('id', id)
+        .single();
+
+      if (item) {
+        const discount = item.discount_percentage || 0;
+        const currentPrice = discount > 0 ? item.price * (1 - discount / 100) : item.price;
+
+        get().addToCart({
+          type: 'marketplace',
+          productId: id,
+          name: item.name,
+          collection: item.collection || 'Core Collection',
+          thumbnail: item.thumbnail_url,
+          canvasState: item.canvas_state as Record<string, unknown>[],
+          tshirtColor: item.tshirt_color || '#ffffff',
+          apparelModel: item.apparel_model || 'tshirtman',
+          price: Math.round(currentPrice),
+          originalPrice: item.price,
+          discountPercentage: discount,
+        });
       }
     }
   },
@@ -188,74 +337,75 @@ export const useCheckoutStore = create<CheckoutState>((set, get) => ({
     const updatedAddresses = [...get().savedAddresses, created];
 
     set({ savedAddresses: updatedAddresses });
-    await supabase.from('profiles').update({ saved_addresses: updatedAddresses }).eq('id', user.id);
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ saved_addresses: updatedAddresses })
+      .eq('id', user.id);
+
+    if (error) console.error('Failed to save address to database:', error);
+
     return created;
   },
 
-  processPayment: async (addressObj, saveAddress) => {
+  processPayment: async (itemAddressIds) => {
     set({ orderStatus: 'processing' });
 
     try {
-      const { cart, addAddress, savedAddresses } = get();
+      const { cart, savedAddresses } = get();
       const {
         data: { user },
       } = await supabase.auth.getUser();
 
-      if (!user) throw new Error('Authentication required');
-
-      if (saveAddress && addressObj) {
-        const exists = savedAddresses.some((a) => a.address === addressObj.address);
-        if (!exists) await addAddress(addressObj);
+      if (!user) {
+        set({ orderStatus: 'idle' });
+        throw new Error('Authentication required');
       }
 
       const activeItems = cart.filter((item) => Object.values(item.sizes).some((qty) => qty > 0));
 
-      // Generate print files for ALL custom designs in the cart!
-      const processedItems = await Promise.all(
-        activeItems.map(async (item) => {
-          let printFilePath = null;
-          if (item.type === 'custom' && item.canvasState) {
-            const blob = await generatePrintFile(item.canvasState as unknown as DecalData[]);
-            const fileName = `${user.id}/${crypto.randomUUID()}.png`;
-            const { error: uploadError } = await supabase.storage
-              .from('print_files')
-              .upload(fileName, blob, { contentType: 'image/png' });
-            if (uploadError) throw uploadError;
-            printFilePath = fileName;
-          }
+      // Removed Storage Logic & Promise.all entirely - completely synchronous now
+      const processedItems = activeItems.map((item) => {
+        const totalItemQty = Object.values(item.sizes).reduce((a, b) => a + b, 0);
+        const specificAddress = savedAddresses.find((a) => a.id === itemAddressIds[item.cartId]);
 
-          const totalItemQty = Object.values(item.sizes).reduce((a, b) => a + b, 0);
-
-          return {
-            type: item.type,
-            product_id: item.productId,
-            name: item.name,
-            print_file_path: printFilePath,
-            sizes: item.sizes,
-            quantity: totalItemQty,
-            price: item.price,
-          };
-        }),
-      );
+        return {
+          type: item.type,
+          product_id: item.productId,
+          name: item.name,
+          print_file_path: null, // NO LONGER REQUIRED. Eliminated cloud dependency.
+          sizes: item.sizes,
+          quantity: totalItemQty,
+          price: item.price,
+          shipping_snapshot: specificAddress
+            ? {
+                address: specificAddress.address,
+                phone: specificAddress.phone,
+                label: specificAddress.label,
+                customer_name: specificAddress.fullName,
+              }
+            : null,
+        };
+      });
 
       const totalAmount = processedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
       const totalQuantity = processedItems.reduce((sum, item) => sum + item.quantity, 0);
 
+      const fallbackSnapshotId = Object.values(itemAddressIds)[0];
+      const fallbackSnapshot = savedAddresses.find((a) => a.id === fallbackSnapshotId);
+
       const payload = {
         idempotency_key: crypto.randomUUID(),
-        // Multi-item payload array
         items: processedItems,
-        // Legacy fallback fields for safety
-        design_id: processedItems[0]?.type === 'custom' ? processedItems[0].product_id : undefined,
-        marketplace_item_id:
-          processedItems[0]?.type === 'marketplace' ? processedItems[0].product_id : undefined,
         quantity: totalQuantity,
-        shipping_snapshot: {
-          address: addressObj.address,
-          phone: addressObj.phone,
-          label: addressObj.label,
-        },
-        customer_name: addressObj.fullName,
+        shipping_snapshot: fallbackSnapshot
+          ? {
+              address: fallbackSnapshot.address,
+              phone: fallbackSnapshot.phone,
+              label: fallbackSnapshot.label,
+            }
+          : null,
+        customer_name: fallbackSnapshot?.fullName || user.email,
         total_amount: totalAmount,
       };
 
@@ -280,30 +430,33 @@ export const useCheckoutStore = create<CheckoutState>((set, get) => ({
         description: `Order of ${totalQuantity} items`,
         order_id: rzpOrder.id,
         handler: (_response: unknown) => {
-          set({ orderStatus: 'success', cart: [] }); // Clear cart on success!
-          window.location.href = '/dashboard?success=true';
+          set({ orderStatus: 'success', cart: [], lastOrderId: draftOrder.id });
         },
         prefill: {
-          name: addressObj.fullName,
+          name: fallbackSnapshot?.fullName || '',
           email: user.email,
-          contact: addressObj.phone,
+          contact: fallbackSnapshot?.phone || '',
         },
         theme: { color: '#000000' },
-        modal: { ondismiss: () => set({ orderStatus: 'idle' }) },
+        modal: {
+          ondismiss: () => {
+            set({ orderStatus: 'idle' });
+          },
+        },
       };
 
       const rzp = new window.Razorpay(options);
-      rzp.on('payment.failed', () => set({ orderStatus: 'idle' }));
+      rzp.on('payment.failed', () => {
+        set({ orderStatus: 'failed' });
+      });
       rzp.open();
     } catch (error) {
       console.error('Checkout pipeline failed:', error);
-      alert('An error occurred while preparing your checkout. Please try again.');
-      set({ orderStatus: 'idle' });
+      set({ orderStatus: 'failed' });
     }
   },
 }));
 
-// Automatically persist cart to local storage
 let saveTimeout: ReturnType<typeof setTimeout>;
 useCheckoutStore.subscribe((state) => {
   clearTimeout(saveTimeout);

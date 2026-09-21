@@ -29,7 +29,8 @@ import {
   Type,
   Unlink,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { ColorPicker } from '@/ui/components/ColorPicker';
 import { PropertiesPanel } from '@/ui/components/PropertiesPanel';
 import { IconButton } from '@/ui/design-system';
 import type { DecalData, ShapeType } from '@/ui/store/editor-store';
@@ -56,13 +57,6 @@ export function LayersPanel() {
   const [expandedLayerId, setExpandedLayerId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
-
-  const [localHexColor, setLocalHexColor] = useState(tshirtColor);
-  const colorInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    setLocalHexColor(tshirtColor);
-  }, [tshirtColor]);
 
   const { groups, standalone } = useMemo(() => {
     const g: Record<string, DecalData[]> = {};
@@ -269,43 +263,11 @@ export function LayersPanel() {
           </span>
         </div>
 
-        {/* FLAWLESS COLOR PICKER: Fixes square clipping artifact with custom UI wrapper */}
-        <div className="flex gap-3 p-2 bg-[#fbfbfd] border border-black/[0.04] hover:border-black/10 transition-colors rounded-2xl items-center mb-5 min-w-0">
-          <button
-            type="button"
-            onClick={() => colorInputRef.current?.click()}
-            className="w-8 h-8 rounded-full border border-black/10 shrink-0 shadow-inner relative overflow-hidden outline-none flex items-center justify-center bg-[url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAwAAAAMCAIAAADZF8uwAAAAGUlEQVQYV2M4gwH+YwCGIasIUwhT25BVBADtzYNYnXFmQAAAAABJRU5ErkJggg==')]"
-          >
-            <div
-              className="absolute inset-0"
-              style={{
-                backgroundColor: tshirtColor === 'transparent' ? 'transparent' : tshirtColor,
-              }}
-            />
-            <input
-              ref={colorInputRef}
-              type="color"
-              value={tshirtColor === 'transparent' ? '#ffffff' : tshirtColor}
-              onChange={(e) => setTshirtColor(e.target.value)}
-              className="opacity-0 absolute inset-0 w-full h-full cursor-pointer"
-            />
-          </button>
-
-          <input
-            value={localHexColor}
-            onChange={(e) => setLocalHexColor(e.target.value)}
-            onBlur={(e) => {
-              let finalColor = e.target.value.trim();
-              const ctx = document.createElement('canvas').getContext('2d');
-              if (ctx && finalColor) {
-                ctx.fillStyle = finalColor;
-                finalColor = ctx.fillStyle;
-              }
-              setTshirtColor(finalColor);
-              setLocalHexColor(finalColor);
-            }}
-            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-            className="flex-1 font-mono uppercase text-[11px] tracking-widest font-medium bg-transparent border-0 focus:ring-0 text-black px-2 outline-none min-w-0"
+        <div className="mb-5 min-w-0">
+          <ColorPicker
+            color={tshirtColor}
+            onChange={(color) => setTshirtColor(color === 'transparent' ? '#FFFFFF' : color)}
+            disableAlpha={true}
           />
         </div>
 

@@ -1,27 +1,562 @@
-import { Check, Minus, Plus, Search, ShoppingBag, SlidersHorizontal, X } from 'lucide-react';
+import {
+  Box,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Hand,
+  Link as LinkIcon,
+  Loader2,
+  Maximize,
+  Minus,
+  Plus,
+  Search,
+  ShoppingBag,
+  SlidersHorizontal,
+  Sparkles,
+  X,
+} from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { env } from '@/shared/env';
 import { AuthModal } from '@/ui/components/AuthModal';
 import { Mini3DViewer } from '@/ui/components/Mini3DViewer';
-import { PremiumLoader } from '@/ui/components/PremiumLoader';
 import { useAuthStore } from '@/ui/store/auth-store';
 import { useCheckoutStore } from '@/ui/store/checkout-store';
 import type { MarketplaceItem } from '@/ui/store/marketplace-store';
 import { useMarketplaceStore } from '@/ui/store/marketplace-store';
 
+// Global Queue Manager to prevent WebGL Context crashes
+let activeWebglCaptures = 0;
+const MAX_CONCURRENT_WEBGL = 2;
+
+// Helper to calculate the final discounted price safely
+const getFinalPrice = (price: number, discount?: number) => {
+  if (!discount || discount <= 0) return price;
+  return Math.round(price * (1 - discount / 100));
+};
+
+// Intelligent sorter that guarantees "front" images appear before "back" images
+const getSortedGallery = (item: MarketplaceItem): string[] => {
+  const urls =
+    Array.isArray(item.gallery_urls) && item.gallery_urls.length > 0
+      ? item.gallery_urls
+      : item.thumbnail_url
+        ? [item.thumbnail_url]
+        : [];
+
+  return [...urls].sort((a, b) => {
+    const aLower = a.toLowerCase();
+    const bLower = b.toLowerCase();
+    const aFront = aLower.includes('front');
+    const bFront = bLower.includes('front');
+    const aBack = aLower.includes('back');
+    const bBack = bLower.includes('back');
+
+    if (aFront && !bFront) return -1;
+    if (!aFront && bFront) return 1;
+    if (aBack && !bBack) return -1;
+    if (!aBack && bBack) return 1;
+    return 0;
+  });
+};
+
+// --- THE HOVER-TO-HYDRATE 3D ENGINE ---
+function HoverHydrate3D({ product, onOpen }: { product: MarketplaceItem; onOpen: () => void }) {
+  const [snapshot, setSnapshot] = useState<string | null>(null);
+  const [isHovered, setIsHovered] = useState(false);
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [isInView, setIsInView] = useState(false);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const observerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsInView(true);
+        }
+      },
+      { threshold: 0.1, rootMargin: '200px' },
+    );
+
+    if (observerRef.current) observer.observe(observerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    let checkInterval: ReturnType<typeof setInterval>;
+
+    if (isInView && !snapshot && !isCapturing) {
+      checkInterval = setInterval(() => {
+        if (activeWebglCaptures < MAX_CONCURRENT_WEBGL) {
+          activeWebglCaptures++;
+          if (mounted) setIsCapturing(true);
+          clearInterval(checkInterval);
+        }
+      }, 200);
+    }
+
+    return () => {
+      mounted = false;
+      if (checkInterval) clearInterval(checkInterval);
+    };
+  }, [isInView, snapshot, isCapturing]);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    if (isCapturing) {
+      timer = setTimeout(() => {
+        if (containerRef.current) {
+          const canvas = containerRef.current.querySelector('canvas');
+          if (canvas) {
+            try {
+              const dataUrl = canvas.toDataURL('image/png', 1.0);
+              if (dataUrl.length > 20000) {
+                setSnapshot(dataUrl);
+                activeWebglCaptures--;
+                setIsCapturing(false);
+                return;
+              }
+            } catch (e) {
+              console.error('Failed to capture WebGL snapshot', e);
+            }
+          }
+        }
+        activeWebglCaptures--;
+        setIsCapturing(false);
+      }, 2500);
+    }
+
+    return () => {
+      if (timer) {
+        clearTimeout(timer);
+        if (isCapturing) activeWebglCaptures--;
+      }
+    };
+  }, [isCapturing]);
+
+  const shouldRender3D = isCapturing || isHovered;
+
+  return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: Visual hover trigger for 3D hydration
+    <div
+      ref={observerRef}
+      className="absolute inset-0 w-full h-full cursor-pointer touch-none bg-transparent overflow-hidden rounded-2xl"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      {!snapshot && (
+        <div className="absolute inset-0 w-full h-full flex flex-col items-center justify-center bg-[#f8f8f8] animate-pulse z-0">
+          <Loader2 size={24} strokeWidth={1.5} className="animate-spin text-neutral-300" />
+        </div>
+      )}
+
+      {snapshot && (
+        <img
+          src={snapshot}
+          alt={product.name}
+          loading="lazy"
+          className={`absolute inset-0 w-full h-full object-cover mix-blend-multiply transition-opacity duration-700 z-10 ${
+            shouldRender3D && !isCapturing ? 'opacity-0' : 'opacity-100'
+          }`}
+        />
+      )}
+
+      {shouldRender3D && (
+        <div
+          ref={containerRef}
+          className={`absolute inset-0 w-full h-full transition-opacity duration-500 z-20 ${
+            isCapturing && !isHovered ? 'pointer-events-none' : ''
+          }`}
+          style={{ opacity: isCapturing && !isHovered ? 0.01 : 1 }}
+        >
+          <Mini3DViewer
+            canvasState={product.canvas_state}
+            tshirtColor={product.tshirt_color || '#ffffff'}
+            fallbackImage={product.thumbnail_url}
+            apparelModel={product.apparel_model || 'tshirtman'}
+          />
+        </div>
+      )}
+
+      <button
+        type="button"
+        aria-label={`View details for ${product.name}`}
+        className="absolute inset-0 w-full h-full outline-none border-0 bg-transparent z-30 cursor-pointer"
+        onClick={onOpen}
+      />
+    </div>
+  );
+}
+
+// --- SLEEK HOVER & DRAG CAROUSEL FOR GRID CARDS ---
+function ProductGridCarousel({
+  urls,
+  alt,
+  onOpen,
+}: {
+  urls: string[];
+  alt: string;
+  onOpen: () => void;
+}) {
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [dragStart, setDragStart] = useState<number | null>(null);
+  const [dragEnd, setDragEnd] = useState<number | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const handleDragStart = (clientX: number) => {
+    setDragStart(clientX);
+    setDragEnd(clientX);
+    setIsDragging(false);
+  };
+
+  const handleDragMove = (clientX: number) => {
+    if (dragStart !== null) {
+      setDragEnd(clientX);
+      if (Math.abs(clientX - dragStart) > 5) {
+        setIsDragging(true);
+      }
+    }
+  };
+
+  const handleDragEnd = () => {
+    if (dragStart !== null && dragEnd !== null && isDragging) {
+      const distance = dragStart - dragEnd;
+      const minSwipeDistance = 30;
+
+      if (distance > minSwipeDistance) {
+        setCurrentIndex((prev) => (prev + 1) % urls.length);
+      } else if (distance < -minSwipeDistance) {
+        setCurrentIndex((prev) => (prev - 1 + urls.length) % urls.length);
+      }
+    } else if (!isDragging) {
+      onOpen();
+    }
+    setDragStart(null);
+    setDragEnd(null);
+    setIsDragging(false);
+  };
+
+  if (urls.length === 0) {
+    return (
+      <button
+        type="button"
+        aria-label="Open product"
+        className="absolute inset-0 w-full h-full flex items-center justify-center cursor-pointer bg-transparent border-0 outline-none"
+        onClick={onOpen}
+      >
+        <Box size={24} className="text-neutral-300" />
+      </button>
+    );
+  }
+
+  return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: Custom swipe/drag carousel
+    <div
+      className={`absolute inset-0 w-full h-full select-none ${isDragging ? 'cursor-grabbing' : 'cursor-pointer'}`}
+      onMouseLeave={() => {
+        setCurrentIndex(0);
+        setIsDragging(false);
+        setDragStart(null);
+      }}
+      onTouchStart={(e) => handleDragStart(e.touches[0].clientX)}
+      onTouchMove={(e) => handleDragMove(e.touches[0].clientX)}
+      onTouchEnd={handleDragEnd}
+      onMouseDown={(e) => handleDragStart(e.clientX)}
+      onMouseMove={(e) => handleDragMove(e.clientX)}
+      onMouseUp={handleDragEnd}
+    >
+      <img
+        src={urls[currentIndex]}
+        alt={alt}
+        loading="lazy"
+        draggable={false}
+        className="w-full h-full object-cover object-top transition-transform duration-1000 group-hover:scale-[1.05] mix-blend-multiply"
+      />
+      {urls.length > 1 && (
+        <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-1.5 z-20">
+          {urls.map((url, i) => (
+            // biome-ignore lint/a11y/noStaticElementInteractions: Visual hover indicator
+            <div
+              key={url}
+              onMouseEnter={(e) => {
+                e.stopPropagation();
+                setCurrentIndex(i);
+              }}
+              className={`w-1.5 h-1.5 rounded-full transition-colors ${
+                i === currentIndex ? 'bg-black' : 'bg-black/20'
+              }`}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- INTERACTIVE CAROUSEL FOR THE DETAIL DRAWER & FULLSCREEN ---
+function ProductDrawerCarousel({
+  urls,
+  alt,
+  onZoom,
+  isFullScreen = false,
+}: {
+  urls: string[];
+  alt: string;
+  onZoom?: () => void;
+  isFullScreen?: boolean;
+}) {
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [dragStart, setDragStart] = useState<number | null>(null);
+  const [dragEnd, setDragEnd] = useState<number | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [showSwipeHint, setShowSwipeHint] = useState(!isFullScreen);
+
+  const handleDragStart = (clientX: number) => {
+    setDragEnd(null);
+    setDragStart(clientX);
+    setIsDragging(false);
+    setShowSwipeHint(false);
+  };
+
+  const handleDragMove = (clientX: number) => {
+    if (dragStart !== null) {
+      setDragEnd(clientX);
+      if (Math.abs(clientX - dragStart) > 5) {
+        setIsDragging(true);
+      }
+    }
+  };
+
+  const handleDragEnd = () => {
+    if (dragStart !== null) {
+      const distance = dragEnd !== null ? dragStart - dragEnd : 0;
+      const minSwipeDistance = 40;
+
+      if (Math.abs(distance) < 5 && !isDragging) {
+        onZoom?.();
+      } else if (distance > minSwipeDistance) {
+        setCurrentIndex((prev) => (prev + 1) % urls.length);
+      } else if (distance < -minSwipeDistance) {
+        setCurrentIndex((prev) => (prev - 1 + urls.length) % urls.length);
+      }
+    }
+
+    setIsDragging(false);
+    setDragStart(null);
+    setDragEnd(null);
+  };
+
+  if (urls.length === 0) {
+    return (
+      <div className="w-full h-full flex items-center justify-center p-8 lg:p-16">
+        <Box size={40} className="text-neutral-300" />
+      </div>
+    );
+  }
+
+  return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: Custom swipe/drag/zoom carousel
+    <div
+      className={`w-full h-full relative flex items-center justify-center group/carousel bg-[#f8f8f8] overflow-hidden select-none ${isDragging ? 'cursor-grabbing' : onZoom ? 'cursor-zoom-in' : 'cursor-grab'} ${isFullScreen ? 'max-w-none p-4 md:p-16' : 'max-w-[500px] p-6 sm:p-12'}`}
+      onTouchStart={(e) => handleDragStart(e.targetTouches[0].clientX)}
+      onTouchMove={(e) => handleDragMove(e.targetTouches[0].clientX)}
+      onTouchEnd={handleDragEnd}
+      onMouseDown={(e) => handleDragStart(e.clientX)}
+      onMouseMove={(e) => handleDragMove(e.clientX)}
+      onMouseUp={handleDragEnd}
+      onMouseLeave={() => {
+        if (dragStart !== null) handleDragEnd();
+      }}
+    >
+      <img
+        src={urls[currentIndex]}
+        alt={alt}
+        draggable={false}
+        className={`w-full h-full object-contain mix-blend-multiply transition-opacity duration-300 pointer-events-none ${isFullScreen ? 'drop-shadow-2xl' : ''}`}
+      />
+
+      {onZoom && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onZoom();
+          }}
+          className="absolute top-4 right-4 z-20 w-8 h-8 flex items-center justify-center rounded-full bg-white/80 backdrop-blur-sm text-black shadow-sm transition-all hover:bg-white hover:scale-110 outline-none"
+          aria-label="View fullscreen"
+        >
+          <Maximize size={14} strokeWidth={2} />
+        </button>
+      )}
+
+      {urls.length > 1 && (
+        <>
+          <div
+            className={`md:hidden absolute bottom-12 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/80 backdrop-blur-md px-4 py-2 rounded-full shadow-lg z-30 pointer-events-none transition-opacity duration-1000 ${showSwipeHint ? 'opacity-100' : 'opacity-0'}`}
+          >
+            <Hand size={14} className="text-white animate-pulse" />
+            <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white">
+              Swipe
+            </span>
+          </div>
+
+          <button
+            type="button"
+            aria-label="Previous image"
+            onClick={(e) => {
+              e.stopPropagation();
+              setCurrentIndex((prev) => (prev - 1 + urls.length) % urls.length);
+            }}
+            className={`hidden md:flex absolute left-4 lg:left-8 top-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 hover:bg-white text-black shadow-md transition-all z-20 outline-none opacity-0 group-hover/carousel:opacity-100 hover:scale-110 ${isFullScreen ? 'w-14 h-14' : 'w-10 h-10'}`}
+          >
+            <ChevronLeft size={isFullScreen ? 28 : 20} strokeWidth={2} />
+          </button>
+
+          <button
+            type="button"
+            aria-label="Next image"
+            onClick={(e) => {
+              e.stopPropagation();
+              setCurrentIndex((prev) => (prev + 1) % urls.length);
+            }}
+            className={`hidden md:flex absolute right-4 lg:right-8 top-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 hover:bg-white text-black shadow-md transition-all z-20 outline-none opacity-0 group-hover/carousel:opacity-100 hover:scale-110 ${isFullScreen ? 'w-14 h-14' : 'w-10 h-10'}`}
+          >
+            <ChevronRight size={isFullScreen ? 28 : 20} strokeWidth={2} />
+          </button>
+
+          <div className="absolute bottom-6 left-0 right-0 flex justify-center gap-2 z-20">
+            {urls.map((url, i) => (
+              <button
+                key={url}
+                type="button"
+                aria-label={`View image ${i + 1}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCurrentIndex(i);
+                }}
+                className={`h-2 rounded-full transition-all outline-none ${
+                  i === currentIndex ? 'bg-black w-4' : 'bg-black/20 w-2 hover:bg-black/40'
+                }`}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// --- UNIVERSAL PRODUCT CARD COMPONENT ---
+function ProductCard({
+  product,
+  onOpen,
+}: {
+  product: MarketplaceItem;
+  onOpen: (p: MarketplaceItem) => void;
+}) {
+  const sortedUrls = getSortedGallery(product);
+
+  return (
+    <div className="group flex flex-col w-full bg-transparent border-0 p-0 m-0 text-left">
+      <div className="relative aspect-[4/5] overflow-hidden mb-6 w-full flex items-center justify-center bg-[#f8f8f8] rounded-2xl group-hover:bg-[#f0f0f0] transition-colors duration-500">
+        {/* Floating Promotional Tags */}
+        <div className="absolute top-4 left-4 z-20 flex flex-col gap-1.5 items-start">
+          {product.is_new && (
+            <span className="bg-blue-50 text-blue-600 px-2 py-1 text-[8px] font-bold uppercase tracking-widest rounded-md border border-blue-100/50">
+              New
+            </span>
+          )}
+          {product.is_bestseller && (
+            <span className="bg-amber-50 text-amber-600 px-2 py-1 text-[8px] font-bold uppercase tracking-widest rounded-md border border-amber-100/50">
+              Best Seller
+            </span>
+          )}
+          {product.is_trending && (
+            <span className="bg-purple-50 text-purple-600 px-2 py-1 text-[8px] font-bold uppercase tracking-widest rounded-md border border-purple-100/50">
+              Trending
+            </span>
+          )}
+        </div>
+
+        {product.canvas_state ? (
+          <HoverHydrate3D product={product} onOpen={() => onOpen(product)} />
+        ) : (
+          <ProductGridCarousel
+            urls={sortedUrls}
+            alt={product.name}
+            onOpen={() => onOpen(product)}
+          />
+        )}
+      </div>
+
+      {/* High-Fashion Typography */}
+      <button
+        type="button"
+        className="flex flex-col items-center text-center w-full px-2 cursor-pointer outline-none border-0 bg-transparent"
+        onClick={() => onOpen(product)}
+      >
+        <h3 className="font-light text-xs tracking-[0.15em] uppercase mb-1.5 text-black truncate w-full">
+          {product.name}
+        </h3>
+        <div className="flex items-center justify-center gap-2">
+          {product.discount_percentage && product.discount_percentage > 0 ? (
+            <>
+              <span className="text-[10px] font-medium text-neutral-300 line-through tracking-widest">
+                ₹{product.price.toLocaleString('en-IN')}
+              </span>
+              <span className="text-[10px] font-bold text-red-500 tracking-widest">
+                ₹{getFinalPrice(product.price, product.discount_percentage).toLocaleString('en-IN')}
+              </span>
+            </>
+          ) : (
+            <span className="text-[10px] font-medium text-neutral-400 tracking-widest">
+              ₹{product.price.toLocaleString('en-IN')}
+            </span>
+          )}
+        </div>
+      </button>
+    </div>
+  );
+}
+
 export function Marketplace() {
   const { isAuthenticated, openAuthModal } = useAuthStore();
   const { cart, addToCart } = useCheckoutStore();
-  const { items, isLoading, fetchItems } = useMarketplaceStore();
+
+  // Extracting all the new Growth UI Features
+  const {
+    items,
+    spotlightItems,
+    collections,
+    isLoading,
+    isLoadingMore,
+    hasMore,
+    currentPage,
+    isShuffleMode,
+    sortBy,
+    fetchCollections,
+    fetchSpotlightItems,
+    fetchRandomItems,
+    fetchItems,
+    incrementPopularity,
+    setSortBy,
+  } = useMarketplaceStore();
+
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Marketplace State
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<string>('All');
 
   // Product Selection State
   const [selectedProduct, setSelectedProduct] = useState<MarketplaceItem | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [selectedSizes, setSelectedSizes] = useState<Record<string, number>>({
+    XS: 0,
     S: 0,
     M: 0,
     L: 0,
@@ -31,41 +566,90 @@ export function Marketplace() {
   const [focusedSize, setFocusedSize] = useState<string>('M');
   const [isAdding, setIsAdding] = useState(false);
   const [cartAnim, setCartAnim] = useState(false);
+  const [isCopied, setIsCopied] = useState(false);
+
+  // Used for Skeleton Loaders
+  const skeletonKeys = useMemo(() => Array.from({ length: 12 }).map(() => crypto.randomUUID()), []);
+
+  // Synchronization locks
+  const isNavigating = useRef(false);
+  const observerTarget = useRef<HTMLDivElement>(null);
 
   // Touch & Hold Logic for Mobile Size Removal
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isLongPress = useRef(false);
 
+  // 1. Initial Data Fetch (Collections & Spotlight)
   useEffect(() => {
-    fetchItems();
-  }, [fetchItems]);
+    fetchCollections();
+    fetchSpotlightItems();
+  }, [fetchCollections, fetchSpotlightItems]);
+
+  // 2. Debounce Search Queries
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 400);
+    return () => clearTimeout(handler);
+  }, [searchQuery]);
+
+  // 3. Fetch Items Pipeline (Triggers on Category, Search, or Sort change)
+  useEffect(() => {
+    if (sortBy) {
+      fetchItems(activeCategory, debouncedSearch, 1);
+    }
+  }, [activeCategory, debouncedSearch, sortBy, fetchItems]);
+
+  // 4. Infinite Scrolling Observer
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !isLoading && !isLoadingMore) {
+          fetchItems(activeCategory, debouncedSearch, currentPage + 1);
+        }
+      },
+      { threshold: 0.1, rootMargin: '100px' },
+    );
+
+    const currentTarget = observerTarget.current;
+    if (currentTarget) {
+      observer.observe(currentTarget);
+    }
+
+    return () => {
+      if (currentTarget) observer.unobserve(currentTarget);
+    };
+  }, [hasMore, isLoading, isLoadingMore, activeCategory, debouncedSearch, currentPage, fetchItems]);
+
+  // --- DEEP LINKING ROUTER LOGIC ---
+  useEffect(() => {
+    if (isNavigating.current) return;
+
+    const itemId = searchParams.get('item');
+    if (itemId && items.length > 0) {
+      const product = items.find((i) => i.id === itemId);
+      if (product && product.id !== selectedProduct?.id) {
+        setSelectedProduct(product);
+        setSelectedSizes({ XS: 0, S: 0, M: 1, L: 0, XL: 0, XXL: 0 });
+        setFocusedSize('M');
+        document.body.style.overflow = 'hidden';
+      }
+    } else if (!itemId && selectedProduct?.id) {
+      setSelectedProduct(null);
+      document.body.style.overflow = 'auto';
+    }
+  }, [items, searchParams, selectedProduct?.id]);
 
   const totalCartItems = cart.reduce(
     (acc, item) => acc + Object.values(item.sizes).reduce((a, b) => a + b, 0),
     0,
   );
 
+  const currentItemPrice = selectedProduct
+    ? getFinalPrice(selectedProduct.price, selectedProduct.discount_percentage)
+    : 0;
   const totalQty = Object.values(selectedSizes).reduce((a, b) => a + b, 0);
-  const totalPrice = selectedProduct ? totalQty * selectedProduct.price : 0;
-
-  // Dynamically load categories based on fetched data
-  const dynamicCategories = useMemo(() => {
-    const categories = new Set(items.map((i) => i.collection || 'Core'));
-    return ['All', ...Array.from(categories)];
-  }, [items]);
-
-  // Deep Search & Filter Logic (Intelligent Multi-word Match)
-  const filteredItems = items.filter((item) => {
-    const queryWords = searchQuery.toLowerCase().split(' ').filter(Boolean);
-    const searchableText =
-      `${item.name} ${item.description || ''} ${item.collection || ''}`.toLowerCase();
-
-    // Check if EVERY word in the query exists anywhere in the searchable text
-    const matchesSearch = queryWords.every((word) => searchableText.includes(word));
-    const matchesCategory = activeCategory === 'All' || item.collection === activeCategory;
-
-    return matchesSearch && matchesCategory;
-  });
+  const totalPrice = totalQty * currentItemPrice;
 
   const updateLocalSize = (size: string, delta: number) => {
     setSelectedSizes((prev) => ({
@@ -74,11 +658,11 @@ export function Marketplace() {
     }));
   };
 
-  // --- Advanced Luxury Size Interaction Handlers ---
+  // --- Interaction Handlers ---
   const handleSizeLeftClick = (e: React.MouseEvent, size: string) => {
     e.preventDefault();
     if (isLongPress.current) {
-      isLongPress.current = false; // Reset lock so future taps work
+      isLongPress.current = false;
       return;
     }
     setFocusedSize(size);
@@ -97,7 +681,7 @@ export function Marketplace() {
       isLongPress.current = true;
       setFocusedSize(size);
       updateLocalSize(size, -1);
-    }, 500); // 500ms hold to remove
+    }, 500);
   };
 
   const handleTouchEnd = () => {
@@ -105,18 +689,41 @@ export function Marketplace() {
       clearTimeout(longPressTimer.current);
     }
   };
-  // ------------------------------------------------
 
   const handleOpenProduct = (product: MarketplaceItem) => {
+    incrementPopularity(product.id);
+    isNavigating.current = true;
+    setSearchParams({ item: product.id }, { replace: true });
     setSelectedProduct(product);
-    setSelectedSizes({ S: 0, M: 1, L: 0, XL: 0, XXL: 0 });
+    setSelectedSizes({ XS: 0, S: 0, M: 1, L: 0, XL: 0, XXL: 0 });
     setFocusedSize('M');
     document.body.style.overflow = 'hidden';
+    setTimeout(() => {
+      isNavigating.current = false;
+    }, 50);
   };
 
   const handleCloseProduct = () => {
+    isNavigating.current = true;
+    setSearchParams({}, { replace: true });
     setSelectedProduct(null);
+    setIsFullscreen(false);
     document.body.style.overflow = 'auto';
+    setTimeout(() => {
+      isNavigating.current = false;
+    }, 50);
+  };
+
+  const handleShareLink = async () => {
+    if (!selectedProduct) return;
+    const url = `${window.location.origin}${window.location.pathname}?item=${selectedProduct.id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setIsCopied(true);
+      setTimeout(() => setIsCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy link', err);
+    }
   };
 
   useEffect(() => {
@@ -133,12 +740,13 @@ export function Marketplace() {
     let existing = state.cart.find((c) => c.productId === selectedProduct.id);
 
     if (!existing) {
+      const smartThumbnail = getSortedGallery(selectedProduct)[0];
       addToCart({
         type: 'marketplace',
         productId: selectedProduct.id,
         name: selectedProduct.name,
-        thumbnail: selectedProduct.thumbnail_url,
-        price: selectedProduct.price,
+        thumbnail: smartThumbnail,
+        price: currentItemPrice,
         canvasState: selectedProduct.canvas_state,
         tshirtColor: selectedProduct.tshirt_color,
         apparelModel: selectedProduct.apparel_model,
@@ -166,9 +774,37 @@ export function Marketplace() {
   };
 
   return (
-    <div className="w-full h-[100dvh] flex flex-col bg-white font-sans selection:bg-neutral-200 text-black relative">
-      {/* GLOBAL FULLSCREEN LOADER */}
-      {isLoading && <PremiumLoader fullScreen={true} />}
+    <div className="w-full h-dvh flex flex-col bg-white font-sans selection:bg-neutral-200 text-black relative select-none">
+      {/* FULLSCREEN INSPECTION MODAL */}
+      {isFullscreen && selectedProduct && (
+        <div className="fixed inset-0 z-[600] bg-[#f8f8f8] flex flex-col animate-in fade-in zoom-in-95 duration-300">
+          <button
+            type="button"
+            onClick={() => setIsFullscreen(false)}
+            className="absolute top-6 right-6 sm:top-8 sm:right-8 z-50 w-12 h-12 flex items-center justify-center bg-white/90 hover:bg-white backdrop-blur-md text-black rounded-full shadow-lg transition-transform hover:scale-110 outline-none"
+          >
+            <X size={24} strokeWidth={1.5} />
+          </button>
+          <div className="flex-1 w-full h-full relative p-4 md:p-12">
+            {selectedProduct.canvas_state ? (
+              <div className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing mix-blend-multiply flex items-center justify-center">
+                <Mini3DViewer
+                  canvasState={selectedProduct.canvas_state}
+                  tshirtColor={selectedProduct.tshirt_color || '#ffffff'}
+                  fallbackImage={selectedProduct.thumbnail_url}
+                  apparelModel={selectedProduct.apparel_model || 'tshirtman'}
+                />
+              </div>
+            ) : (
+              <ProductDrawerCarousel
+                urls={getSortedGallery(selectedProduct)}
+                alt={selectedProduct.name}
+                isFullScreen={true}
+              />
+            )}
+          </div>
+        </div>
+      )}
 
       {/* LUXURY PRODUCT DRAWER */}
       {selectedProduct && (
@@ -183,7 +819,7 @@ export function Marketplace() {
           <div
             role="dialog"
             aria-modal="true"
-            className="relative z-10 w-full md:w-[860px] lg:w-[1000px] h-[100dvh] bg-white shadow-2xl flex flex-col md:flex-row animate-in slide-in-from-right duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
+            className="relative z-10 w-full md:w-[215px] lg:w-[250px] min-w-[50vw] max-w-full md:max-w-2xl h-dvh bg-white shadow-2xl flex flex-col md:flex-row animate-in slide-in-from-right duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
           >
             <button
               type="button"
@@ -193,32 +829,39 @@ export function Marketplace() {
               <X size={20} strokeWidth={1.5} />
             </button>
 
-            {/* Left Media Area - Full column expansion prevents cropping on zoom */}
-            <div className="w-full md:w-1/2 h-[45vh] md:h-full bg-[#f8f8f8] relative shrink-0 flex items-center justify-center border-b md:border-b-0 md:border-r border-black/5 overflow-hidden">
+            {/* Left Media Area */}
+            <div className="w-full md:w-1/2 h-[50vh] min-h-[350px] md:min-h-0 md:h-full bg-[#f8f8f8] relative shrink-0 flex items-center justify-center border-b md:border-b-0 md:border-r border-black/5 overflow-hidden">
               {selectedProduct.canvas_state ? (
-                /* The 3D Viewer is now completely unconstrained from the aspect-square box */
-                <div className="absolute inset-0 w-full h-full pointer-events-auto cursor-grab active:cursor-grabbing drop-shadow-2xl mix-blend-multiply">
+                <div className="absolute inset-0 w-full h-full pointer-events-auto cursor-grab active:cursor-grabbing mix-blend-multiply flex items-center justify-center p-4">
                   <Mini3DViewer
                     canvasState={selectedProduct.canvas_state}
                     tshirtColor={selectedProduct.tshirt_color || '#ffffff'}
                     fallbackImage={selectedProduct.thumbnail_url}
                     apparelModel={selectedProduct.apparel_model || 'tshirtman'}
                   />
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsFullscreen(true);
+                    }}
+                    className="absolute top-4 right-4 z-20 w-8 h-8 flex items-center justify-center rounded-full bg-white/80 backdrop-blur-sm text-black shadow-sm transition-all hover:bg-white hover:scale-110 outline-none"
+                    aria-label="View fullscreen"
+                  >
+                    <Maximize size={14} strokeWidth={2} />
+                  </button>
                 </div>
               ) : (
-                /* Static imagery remains constrained so it doesn't look stretched or distorted */
-                <div className="w-full h-full max-w-[400px] aspect-square relative drop-shadow-2xl p-8 lg:p-16">
-                  <img
-                    src={selectedProduct.thumbnail_url}
-                    alt={selectedProduct.name}
-                    className="w-full h-full object-contain mix-blend-multiply"
-                  />
-                </div>
+                <ProductDrawerCarousel
+                  urls={getSortedGallery(selectedProduct)}
+                  alt={selectedProduct.name}
+                  onZoom={() => setIsFullscreen(true)}
+                />
               )}
             </div>
 
             {/* Right Details Area */}
-            <div className="w-full md:w-1/2 h-[55vh] md:h-full flex flex-col bg-white relative">
+            <div className="w-full md:w-1/2 h-[50vh] md:h-full flex flex-col bg-white relative">
               <button
                 type="button"
                 onClick={handleCloseProduct}
@@ -229,15 +872,70 @@ export function Marketplace() {
 
               <div className="px-8 py-10 md:px-12 md:py-16 flex flex-col flex-1 overflow-y-auto hide-scrollbar">
                 <div className="mb-10">
-                  <span className="text-[10px] font-medium uppercase tracking-[0.2em] text-neutral-400 mb-3 block">
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex flex-wrap gap-1.5">
+                      {selectedProduct.is_new && (
+                        <span className="bg-blue-50 text-blue-600 px-2 py-0.5 text-[8px] font-bold uppercase tracking-widest rounded-md border border-blue-100/50">
+                          New
+                        </span>
+                      )}
+                      {selectedProduct.is_bestseller && (
+                        <span className="bg-amber-50 text-amber-600 px-2 py-0.5 text-[8px] font-bold uppercase tracking-widest rounded-md border border-amber-100/50">
+                          Best
+                        </span>
+                      )}
+                      {selectedProduct.is_trending && (
+                        <span className="bg-purple-50 text-purple-600 px-2 py-0.5 text-[8px] font-bold uppercase tracking-widest rounded-md border border-purple-100/50">
+                          Trend
+                        </span>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleShareLink}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#fbfbfd] hover:bg-neutral-100 text-neutral-500 hover:text-black transition-colors border border-black/5 outline-none md:mr-8 shrink-0"
+                    >
+                      {isCopied ? (
+                        <Check size={12} strokeWidth={2.5} className="text-green-600" />
+                      ) : (
+                        <LinkIcon size={12} strokeWidth={2} />
+                      )}
+                      <span
+                        className={`text-[9px] font-bold uppercase tracking-[0.1em] ${isCopied ? 'text-green-600' : ''}`}
+                      >
+                        {isCopied ? 'Copied' : 'Share'}
+                      </span>
+                    </button>
+                  </div>
+
+                  <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-neutral-400 mb-2 block">
                     {selectedProduct.collection || 'Core Collection'}
-                  </span>
-                  <h2 className="text-3xl md:text-4xl font-light tracking-tight leading-snug mb-3 text-black">
+                  </p>
+
+                  <h2 className="text-3xl md:text-4xl font-light tracking-tight leading-snug mb-4 text-black pr-8">
                     {selectedProduct.name}
                   </h2>
-                  <p className="text-base font-normal text-neutral-500 tracking-wider">
-                    ₹{selectedProduct.price.toLocaleString('en-IN')}
-                  </p>
+
+                  <div className="flex items-center gap-3">
+                    {selectedProduct.discount_percentage ? (
+                      <>
+                        <span className="text-xl font-normal text-red-500 tracking-wider">
+                          ₹{currentItemPrice.toLocaleString('en-IN')}
+                        </span>
+                        <span className="text-sm font-medium text-neutral-300 line-through tracking-wider">
+                          ₹{selectedProduct.price.toLocaleString('en-IN')}
+                        </span>
+                        <span className="text-[9px] font-bold text-red-500 uppercase tracking-widest bg-red-50 px-2 py-1 rounded-md border border-red-100">
+                          -{selectedProduct.discount_percentage}% OFF
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-xl font-normal text-neutral-500 tracking-wider">
+                        ₹{selectedProduct.price.toLocaleString('en-IN')}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="prose prose-sm text-neutral-500 font-light leading-relaxed mb-12 text-sm tracking-wide">
@@ -249,17 +947,16 @@ export function Marketplace() {
 
                 <div className="mt-auto">
                   <div className="flex justify-between items-center mb-6">
-                    <span className="text-xs font-medium tracking-[0.1em] uppercase text-black">
+                    <span className="text-xs font-medium tracking-widest uppercase text-black">
                       Select Size
                     </span>
-                    <span className="text-[10px] uppercase tracking-[0.1em] text-neutral-400 cursor-pointer hover:text-black transition-colors underline underline-offset-4">
+                    <span className="text-[10px] uppercase tracking-widest text-neutral-400 cursor-pointer hover:text-black transition-colors underline underline-offset-4">
                       Size Guide
                     </span>
                   </div>
 
-                  {/* Minimalist Size Selector */}
-                  <div className="grid grid-cols-5 gap-2 mb-6">
-                    {['S', 'M', 'L', 'XL', 'XXL'].map((size) => {
+                  <div className="grid grid-cols-6 gap-2 mb-6">
+                    {['XS', 'S', 'M', 'L', 'XL', 'XXL'].map((size) => {
                       const qty = selectedSizes[size] || 0;
                       const isFocused = focusedSize === size;
                       return (
@@ -277,8 +974,8 @@ export function Marketplace() {
                           }`}
                         >
                           {size}
-                          {qty > 0 && !isFocused && (
-                            <span className="absolute top-1 right-2 w-[14px] h-[14px] bg-black text-white text-[8px] font-bold flex items-center justify-center rounded-full shadow-sm animate-in zoom-in border border-white">
+                          {qty > 0 && (
+                            <span className="absolute top-1 right-2 w-3.5 h-3.5 bg-black text-white text-[8px] font-bold flex items-center justify-center rounded-full shadow-sm animate-in zoom-in border border-white">
                               {qty}
                             </span>
                           )}
@@ -287,9 +984,8 @@ export function Marketplace() {
                     })}
                   </div>
 
-                  {/* Contextual Stepper for the Focused Size */}
-                  <div className="flex items-center justify-between px-5 py-4 bg-[#fbfbfd] border border-black/[0.03] rounded-2xl mb-10 transition-all">
-                    <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-neutral-500">
+                  <div className="flex items-center justify-between px-5 py-4 bg-[#fbfbfd] border border-black/[0.04] rounded-2xl mb-10 transition-all">
+                    <span className="text-[10px] font-medium uppercase tracking-widest text-neutral-500">
                       Quantity <span className="text-black font-bold ml-1">({focusedSize})</span>
                     </span>
                     <div className="flex items-center gap-6 text-black">
@@ -318,14 +1014,14 @@ export function Marketplace() {
                     type="button"
                     onClick={confirmAddToCart}
                     disabled={totalQty === 0 || isAdding}
-                    className="w-full h-[60px] bg-black hover:bg-neutral-800 disabled:bg-neutral-100 disabled:text-neutral-400 text-white font-normal uppercase tracking-[0.2em] text-[11px] rounded-full transition-all flex items-center justify-center outline-none shadow-lg"
+                    className="w-full h-14 bg-black hover:bg-neutral-800 disabled:bg-neutral-100 disabled:text-neutral-400 text-white font-normal uppercase tracking-[0.2em] text-[11px] rounded-full transition-all flex items-center justify-center outline-none shadow-lg"
                   >
                     {isAdding ? (
                       <span className="flex items-center gap-3">
                         <Check size={18} strokeWidth={1.5} /> Added To Bag
                       </span>
                     ) : (
-                      `Add To Bag — ₹${totalPrice.toLocaleString('en-IN')}`
+                      `Add To Bag - ₹${totalPrice.toLocaleString('en-IN')}`
                     )}
                   </button>
                   <p className="text-[9px] text-center text-neutral-400 mt-6 font-medium uppercase tracking-widest">
@@ -392,10 +1088,9 @@ export function Marketplace() {
 
       {/* STICKY MARKETPLACE NAVIGATION & SEARCH */}
       <div className="w-full bg-white/95 backdrop-blur-md border-b border-black/[0.04] sticky top-[70px] z-30 shadow-[0_4px_20px_rgba(0,0,0,0.02)]">
-        {/* Mobile layout updated: flex-col wraps gracefully so search isn't squished */}
         <div className="max-w-[1600px] mx-auto px-6 lg:px-12 py-3 sm:py-0 sm:h-14 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-6 overflow-x-auto hide-scrollbar w-full sm:w-auto pb-1 sm:pb-0">
-            {dynamicCategories.map((cat) => (
+            {collections.map((cat) => (
               <button
                 key={cat}
                 type="button"
@@ -411,15 +1106,58 @@ export function Marketplace() {
             ))}
           </div>
 
-          <div className="flex items-center gap-3 bg-[#fbfbfd] border border-black/5 px-4 py-2 rounded-full w-full sm:w-56 lg:w-72 focus-within:border-black/20 transition-all duration-300">
-            <Search size={14} strokeWidth={1.5} className="text-neutral-400 shrink-0" />
-            <input
-              type="text"
-              placeholder="Search pieces..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-transparent border-none text-[10px] uppercase tracking-[0.15em] outline-none w-full text-black placeholder:text-neutral-400 font-medium"
-            />
+          <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto mt-2 sm:mt-0 overflow-x-auto hide-scrollbar pb-1 sm:pb-0">
+            {/* Sleek Toggle for Sort */}
+            <div className="flex items-center bg-[#fbfbfd] border border-black/[0.03] p-1 rounded-full shrink-0">
+              <button
+                type="button"
+                onClick={() => setSortBy('trending')}
+                className={`px-3 py-1.5 rounded-full text-[9px] uppercase tracking-[0.15em] transition-all outline-none ${
+                  sortBy === 'trending'
+                    ? 'bg-white text-black shadow-sm font-bold'
+                    : 'text-neutral-400 font-medium hover:text-black'
+                }`}
+              >
+                Trending
+              </button>
+              <button
+                type="button"
+                onClick={() => setSortBy('newest')}
+                className={`px-3 py-1.5 rounded-full text-[9px] uppercase tracking-[0.15em] transition-all outline-none ${
+                  sortBy === 'newest'
+                    ? 'bg-white text-black shadow-sm font-bold'
+                    : 'text-neutral-400 font-medium hover:text-black'
+                }`}
+              >
+                Newest
+              </button>
+            </div>
+
+            {/* Shuffle Button */}
+            <button
+              type="button"
+              onClick={fetchRandomItems}
+              className={`flex items-center justify-center w-8 h-8 rounded-full transition-all outline-none shrink-0 ${
+                isShuffleMode
+                  ? 'bg-black text-white shadow-md'
+                  : 'bg-[#fbfbfd] border border-black/[0.03] text-black hover:bg-white hover:shadow-sm'
+              }`}
+              aria-label="Surprise Me"
+            >
+              <Sparkles size={13} strokeWidth={2} />
+            </button>
+
+            {/* Search Bar */}
+            <div className="flex items-center gap-3 bg-[#fbfbfd] border border-black/[0.03] px-4 py-2 rounded-full w-full sm:w-56 lg:w-72 focus-within:bg-white focus-within:shadow-sm focus-within:border-black/10 transition-all duration-300">
+              <Search size={14} strokeWidth={1.5} className="text-neutral-400 shrink-0" />
+              <input
+                type="text"
+                placeholder="Search pieces..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="bg-transparent border-none text-[10px] uppercase tracking-[0.15em] outline-none w-full text-black placeholder:text-neutral-400 font-medium"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -427,7 +1165,18 @@ export function Marketplace() {
       {/* MAIN GRID */}
       <main className="flex-1 overflow-y-auto overflow-x-hidden w-full relative bg-white">
         <div className="max-w-[1600px] mx-auto px-6 lg:px-12 py-10 pb-32">
-          {!isLoading && filteredItems.length === 0 ? (
+          {/* SKELETON LOADING STATE */}
+          {isLoading && items.length === 0 ? (
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-4 gap-y-16 sm:gap-x-12 sm:gap-y-24">
+              {skeletonKeys.map((key) => (
+                <div key={key} className="w-full flex flex-col items-center">
+                  <div className="w-full aspect-[4/5] bg-[#f8f8f8] animate-pulse rounded-2xl mb-6" />
+                  <div className="w-3/4 h-3 bg-[#f8f8f8] animate-pulse rounded-full mb-3" />
+                  <div className="w-1/2 h-3 bg-[#f8f8f8] animate-pulse rounded-full" />
+                </div>
+              ))}
+            </div>
+          ) : !isLoading && items.length === 0 ? (
             <div className="py-40 flex flex-col items-center justify-center text-center">
               <SlidersHorizontal size={32} strokeWidth={1} className="text-neutral-300 mb-6" />
               <p className="text-neutral-500 font-light text-sm tracking-widest uppercase mb-4">
@@ -439,54 +1188,75 @@ export function Marketplace() {
                   setSearchQuery('');
                   setActiveCategory('All');
                 }}
-                className="text-[10px] font-medium uppercase tracking-[0.1em] text-black border-b border-black outline-none"
+                className="text-[10px] font-medium uppercase tracking-widest text-black border-b border-black outline-none"
               >
                 Clear Filters
               </button>
             </div>
           ) : (
-            /* CONCISE, BEAUTIFULLY SPACED GRID: Pure white background, no boxes. */
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-4 gap-y-16 sm:gap-x-12 sm:gap-y-24">
-              {filteredItems.map((product) => (
-                <button
-                  key={product.id}
-                  type="button"
-                  className="group flex flex-col w-full bg-transparent border-0 p-0 m-0 cursor-pointer outline-none text-left"
-                  onClick={() => handleOpenProduct(product)}
-                >
-                  {/* No background box for ultimate minimalism. Just pure floating imagery. */}
-                  <div className="relative aspect-[4/5] overflow-hidden mb-6 w-full flex items-center justify-center p-8 sm:p-12 transition-all duration-700">
-                    {product.canvas_state ? (
-                      <div className="absolute inset-0 pointer-events-none p-4 sm:p-8 transition-transform duration-1000 group-hover:scale-[1.05] drop-shadow-xl">
-                        <Mini3DViewer
-                          canvasState={product.canvas_state}
-                          tshirtColor={product.tshirt_color || '#ffffff'}
-                          fallbackImage={product.thumbnail_url}
-                          apparelModel={product.apparel_model || 'tshirtman'}
+            <>
+              {/* SPOTLIGHT CAROUSEL - Only on default view */}
+              {!isShuffleMode &&
+                activeCategory === 'All' &&
+                !debouncedSearch &&
+                spotlightItems.length > 0 && (
+                  <div className="mb-20 animate-in fade-in duration-700">
+                    <div className="flex items-center gap-4 mb-8">
+                      <h2 className="text-[10px] font-bold uppercase tracking-[0.25em] text-black">
+                        Curated Spotlight
+                      </h2>
+                      <div className="h-px flex-1 bg-black/[0.03]" />
+                    </div>
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-16 sm:gap-x-12">
+                      {spotlightItems.map((product) => (
+                        <ProductCard
+                          key={`spotlight-${product.id}`}
+                          product={product}
+                          onOpen={handleOpenProduct}
                         />
-                      </div>
-                    ) : (
-                      <img
-                        src={product.thumbnail_url}
-                        alt={product.name}
-                        loading="lazy"
-                        className="absolute inset-0 w-full h-full object-contain transition-transform duration-1000 group-hover:scale-[1.05] mix-blend-multiply p-4 sm:p-8"
-                      />
-                    )}
+                      ))}
+                    </div>
+                    <div className="w-full h-px bg-black/[0.03] mt-20" />
                   </div>
+                )}
 
-                  {/* High-Fashion Typography */}
-                  <div className="flex flex-col items-center text-center w-full px-2">
-                    <h3 className="font-light text-xs tracking-[0.15em] uppercase mb-1.5 text-black truncate w-full">
-                      {product.name}
-                    </h3>
-                    <p className="text-[10px] font-medium text-neutral-400 tracking-widest">
-                      ₹{product.price.toLocaleString('en-IN')}
-                    </p>
-                  </div>
-                </button>
-              ))}
-            </div>
+              {/* MAIN COLLECTION GRID */}
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-4 gap-y-16 sm:gap-x-12 sm:gap-y-24">
+                {items.map((product) => (
+                  <ProductCard
+                    key={`grid-${product.id}`}
+                    product={product}
+                    onOpen={handleOpenProduct}
+                  />
+                ))}
+              </div>
+
+              {/* INFINITE SCROLL OBSERVER & LOADER */}
+              {!isShuffleMode && (
+                <div
+                  ref={observerTarget}
+                  className="w-full py-16 mt-8 flex flex-col items-center justify-center"
+                >
+                  {isLoadingMore && (
+                    <div className="flex flex-col items-center text-neutral-400">
+                      <Loader2 size={24} className="animate-spin mb-3" />
+                      <span className="text-[9px] font-bold uppercase tracking-[0.2em]">
+                        Loading More Pieces
+                      </span>
+                    </div>
+                  )}
+                  {!hasMore && items.length > 0 && (
+                    <div className="flex items-center gap-4 w-full max-w-md opacity-40">
+                      <div className="h-px flex-1 bg-black" />
+                      <span className="text-[9px] font-bold uppercase tracking-[0.3em] text-black">
+                        End of Collection
+                      </span>
+                      <div className="h-px flex-1 bg-black" />
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
           )}
         </div>
       </main>

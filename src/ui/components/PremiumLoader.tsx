@@ -25,7 +25,7 @@ export function PremiumLoader({ fullScreen = true }: PremiumLoaderProps) {
 
   return (
     <div
-      className={`${containerClass} flex items-center justify-center animate-in fade-in duration-700`}
+      className={`${containerClass} flex items-center justify-center animate-in fade-in duration-700 select-none`}
     >
       {/* CINEMATIC LUXURY LOGO */}
       <img

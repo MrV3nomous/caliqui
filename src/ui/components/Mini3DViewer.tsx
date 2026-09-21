@@ -1,11 +1,11 @@
 import { Decal, Environment, Html, OrbitControls, useGLTF, useTexture } from '@react-three/drei';
 import { Canvas, createPortal } from '@react-three/fiber';
-import React, { Suspense, useEffect, useMemo } from 'react';
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import * as THREE from 'three';
 import tshirtManUrl from '@/assets/models/tshirtman.glb?url';
 import tshirtWomanUrl from '@/assets/models/tshirtwoman.glb?url';
 import { PremiumLoader } from '@/ui/components/PremiumLoader';
-import { type DecalData, generateAssetTexture } from '@/ui/store/editor-store';
+import { applyImageFilters, type DecalData, generateAssetTexture } from '@/ui/store/editor-store';
 
 const MODELS: Record<string, string> = {
   tshirtman: tshirtManUrl,
@@ -63,7 +63,6 @@ export function Mini3DViewer({
         <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} intensity={1} castShadow />
         <Environment preset="city" />
 
-        {/* PROJECTS THE LOADER DIRECTLY ONTO THE CANVAS */}
         <Suspense
           fallback={
             <Html center>
@@ -80,9 +79,9 @@ export function Mini3DViewer({
 
         <OrbitControls
           enablePan={false}
-          enableZoom={true} // ENABLED ZOOM
-          minDistance={2.5} // Prevent zooming inside the model
-          maxDistance={6.0} // Prevent zooming too far out
+          enableZoom={true}
+          minDistance={2.5}
+          maxDistance={6.0}
           minPolarAngle={0}
           maxPolarAngle={Math.PI}
         />
@@ -102,12 +101,53 @@ function ViewerModel({
 }) {
   const activeModelUrl = MODELS[apparelModel] || tshirtManUrl;
   const { scene } = useGLTF(activeModelUrl);
+  const [hydratedDecals, setHydratedDecals] = useState<DecalData[]>([]);
+
+  // Asynchronously reconstruct the high-fidelity textures (with opacity, tint, blur, shadows)
+  useEffect(() => {
+    let isMounted = true;
+
+    Promise.all(
+      decals.map(async (d) => {
+        // If decal already has full composite src, reuse it
+        if (d.src?.startsWith('data:')) {
+          return d;
+        }
+
+        if (d.type === 'shape' || d.type === 'text') {
+          const baseSrc = generateAssetTexture(d);
+          const { src: finalSrc, aspectRatio } = await applyImageFilters({
+            ...d,
+            originalSrc: baseSrc,
+          });
+          return { ...d, src: finalSrc, originalSrc: baseSrc, aspectRatio };
+        }
+
+        if ((d.type === 'image' || d.type === 'drawing') && (d.originalSrc || d.src)) {
+          const { src: finalSrc, aspectRatio } = await applyImageFilters({
+            ...d,
+            originalSrc: d.originalSrc || d.src,
+          });
+          return { ...d, src: finalSrc, aspectRatio };
+        }
+
+        return d;
+      }),
+    ).then((hydrated) => {
+      if (isMounted) {
+        setHydratedDecals(hydrated);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [decals]);
 
   const copiedScene = useMemo(() => {
     const clone = scene.clone();
 
     clone.traverse((child) => {
-      // 1. Scale positions identically to the Editor
       if (child.position) {
         child.position.multiplyScalar(MODEL_SCALE);
       }
@@ -120,7 +160,6 @@ function ViewerModel({
           child.material = child.material.clone();
         }
 
-        // 2. Permanently shrink the raw geometry for correct dashboard decal rendering
         if (child.geometry) {
           child.geometry = child.geometry.clone();
           child.geometry.scale(MODEL_SCALE, MODEL_SCALE, MODEL_SCALE);
@@ -166,7 +205,7 @@ function ViewerModel({
   return (
     <group scale={1.15}>
       <primitive object={copiedScene} />
-      {decals.map((decal, index) => (
+      {hydratedDecals.map((decal, index) => (
         <DecalErrorBoundary key={decal.id || index}>
           <Suspense fallback={null}>
             <ViewerDecal decal={decal} mesh={primaryMesh} index={index} />
@@ -186,13 +225,8 @@ function ViewerDecal({
   mesh: THREE.Mesh;
   index: number;
 }) {
-  const finalSrc =
-    decal.src ||
-    (decal.type === 'shape' || decal.type === 'text' ? generateAssetTexture(decal) : null);
-
-  if (!finalSrc) return null;
-
-  return <SafeTextureDecal src={finalSrc} decal={decal} mesh={mesh} index={index} />;
+  if (!decal.src) return null;
+  return <SafeTextureDecal src={decal.src} decal={decal} mesh={mesh} index={index} />;
 }
 
 function SafeTextureDecal({

@@ -1,21 +1,32 @@
 import { create } from 'zustand';
 import { supabase } from '@/shared/lib/supabase';
 
+export interface OrderLineItem {
+  id: string;
+  order_id: string;
+  type: 'custom' | 'marketplace';
+  product_id: string;
+  name: string;
+  price: number;
+  quantity: number;
+  sizes: Record<string, number>;
+  status: 'draft' | 'processing' | 'shipped' | 'delivered';
+  courier_name?: string | null;
+  tracking_number?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Order {
   id: string;
   created_at: string;
+  updated_at: string;
   status: string;
   amount: number;
   currency: string;
-  size: string;
-  quantity: number;
-  marketplace_item_id: string | null;
-  design_id: string | null;
-  designs?: {
-    canvas_state: Record<string, unknown>[];
-    tshirt_color: string;
-    thumbnail_url: string;
-  };
+  customer_name: string;
+  shipping_snapshot: Record<string, string> | null;
+  order_items: OrderLineItem[];
 }
 
 export interface SavedDesign {
@@ -25,6 +36,15 @@ export interface SavedDesign {
   created_at: string;
   canvas_state: Record<string, unknown>[];
   tshirt_color: string;
+}
+
+export interface StoreMarketplaceItem {
+  id: string;
+  thumbnail_url: string | null;
+  canvas_state: Record<string, unknown>[] | null;
+  tshirt_color: string | null;
+  apparel_model: string | null;
+  collection: string | null; // Added to fetch the actual collection name
 }
 
 export interface UserProfile {
@@ -37,6 +57,7 @@ export interface UserProfile {
 interface DashboardState {
   orders: Order[];
   designs: SavedDesign[];
+  marketplaceItems: StoreMarketplaceItem[];
   profile: UserProfile | null;
   isLoading: boolean;
   isUpdatingProfile: boolean;
@@ -48,6 +69,7 @@ interface DashboardState {
 export const useDashboardStore = create<DashboardState>((set, get) => ({
   orders: [],
   designs: [],
+  marketplaceItems: [],
   profile: null,
   isLoading: true,
   isUpdatingProfile: false,
@@ -70,9 +92,10 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         .eq('id', user.id)
         .single();
 
+      // Relational join using the new database schema
       const { data: orders } = await supabase
         .from('orders')
-        .select('*, designs(canvas_state, tshirt_color, thumbnail_url)')
+        .select('*, order_items(*)')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
@@ -83,10 +106,16 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
         .is('deleted_at', null)
         .order('created_at', { ascending: false });
 
+      // Included 'collection' in the selection string
+      const { data: marketplaceItems } = await supabase
+        .from('marketplace_items')
+        .select('id, thumbnail_url, canvas_state, tshirt_color, apparel_model, collection');
+
       set({
         profile: profile as UserProfile,
         orders: (orders as Order[]) || [],
         designs: (designs as SavedDesign[]) || [],
+        marketplaceItems: (marketplaceItems as StoreMarketplaceItem[]) || [],
         isLoading: false,
       });
     } catch (error) {

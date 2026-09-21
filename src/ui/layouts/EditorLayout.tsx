@@ -237,7 +237,7 @@ export function EditorLayout() {
   const isBrushToolActive = ['fill', 'blur', 'burn', 'saturate', 'erase'].includes(globalToolMode);
 
   return (
-    <div className="w-screen h-[100dvh] flex flex-col bg-[#fbfbfd] font-sans overflow-hidden relative selection:bg-neutral-200 text-black">
+    <div className="w-screen h-dvh flex flex-col bg-[#fbfbfd] font-sans overflow-hidden relative selection:bg-neutral-200 text-black select-none">
       {isInitializing && <PremiumLoader fullScreen={true} />}
 
       <ContextMenu />
@@ -245,7 +245,7 @@ export function EditorLayout() {
 
       {/* APPLE-STYLE RESET MODAL */}
       {isResetModalOpen && (
-        <div className="fixed inset-0 z-[600] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-600 flex items-center justify-center p-4">
           <button
             type="button"
             aria-label="Close modal"
@@ -255,7 +255,7 @@ export function EditorLayout() {
           <div
             role="dialog"
             aria-modal="true"
-            className="relative z-10 bg-white rounded-3xl p-8 w-full max-w-[360px] shadow-2xl text-center animate-in zoom-in-95 duration-300 ease-out"
+            className="relative z-10 bg-white rounded-3xl p-8 w-full max-w-90 shadow-2xl text-center animate-in zoom-in-95 duration-300 ease-out"
           >
             <h3 className="font-medium text-lg tracking-tight text-black mb-2">Reset Canvas?</h3>
             <p className="text-xs text-neutral-500 mb-8 leading-relaxed">
@@ -283,7 +283,7 @@ export function EditorLayout() {
 
       {/* APPLE-STYLE ADD TO CART MODAL */}
       {isOrderModalOpen && (
-        <div className="fixed inset-0 z-[500] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-500 flex items-center justify-center p-4">
           <button
             type="button"
             aria-label="Close modal"
@@ -294,7 +294,7 @@ export function EditorLayout() {
           <div
             role="dialog"
             aria-modal="true"
-            className="relative z-10 bg-white rounded-[2rem] p-6 sm:p-8 w-full max-w-[420px] shadow-2xl animate-in zoom-in-95 duration-300 ease-out"
+            className="relative z-10 bg-white rounded-4xl p-6 sm:p-8 w-full max-w-105 shadow-2xl animate-in zoom-in-95 duration-300 ease-out"
           >
             <div className="flex justify-between items-center mb-6">
               <div>
@@ -336,7 +336,7 @@ export function EditorLayout() {
                   >
                     {size}
                     {qty > 0 && (
-                      <span className="absolute -top-1.5 -right-1.5 w-[16px] h-[16px] bg-black text-white text-[8px] font-bold flex items-center justify-center rounded-full shadow-sm animate-in zoom-in border-2 border-white">
+                      <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-black text-white text-[8px] font-bold flex items-center justify-center rounded-full shadow-sm animate-in zoom-in border-2 border-white">
                         {qty}
                       </span>
                     )}
@@ -345,8 +345,8 @@ export function EditorLayout() {
               })}
             </div>
 
-            <div className="flex items-center justify-between px-5 py-4 bg-[#fbfbfd] border border-black/[0.04] rounded-2xl mb-8 transition-all">
-              <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-neutral-500">
+            <div className="flex items-center justify-between px-5 py-4 bg-[#fbfbfd] border border-black/4 rounded-2xl mb-8 transition-all">
+              <span className="text-[10px] font-medium uppercase tracking-widest text-neutral-500">
                 Quantity <span className="text-black font-bold ml-1">({focusedSize})</span>
               </span>
               <div className="flex items-center gap-6 text-black">
@@ -397,7 +397,7 @@ export function EditorLayout() {
       </main>
 
       {isBrushToolActive && (
-        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[100] bg-white/95 backdrop-blur-md border border-black/5 shadow-[0_8px_30px_rgba(0,0,0,0.08)] rounded-full px-6 py-2.5 flex items-center gap-6 animate-in zoom-in-95 pointer-events-auto">
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-100 bg-white/95 backdrop-blur-md border border-black/5 shadow-[0_8px_30px_rgba(0,0,0,0.08)] rounded-full px-6 py-2.5 flex items-center gap-6 animate-in zoom-in-95 pointer-events-auto">
           {globalToolMode === 'fill' ? (
             <div className="flex items-center gap-3">
               <span className="text-[9px] font-medium text-neutral-500 uppercase tracking-[0.2em]">
@@ -444,7 +444,7 @@ export function EditorLayout() {
       )}
 
       {/* SEAMLESS LUXURY STUDIO HEADER - Strict No-Scrolling Flexbox Fixes */}
-      <header className="h-[70px] w-full bg-white/95 backdrop-blur-md border-b border-black/[0.04] flex items-center justify-between px-3 sm:px-6 z-40 shrink-0 select-none gap-2 sticky top-0">
+      <header className="h-17.5 w-full bg-white/95 backdrop-blur-md border-b border-black/4 flex items-center justify-between px-3 sm:px-6 z-40 shrink-0 select-none gap-2 sticky top-0">
         {/* Left: Navigation & Context. Flex-1 allows taking space but min-w-0 stops overflow */}
         <div
           className={`flex items-center gap-1.5 sm:gap-4 shrink-0 transition-opacity duration-300 min-w-0 ${showMobileNameInput ? 'hidden sm:flex' : 'flex'}`}
@@ -508,7 +508,7 @@ export function EditorLayout() {
           >
             <ShoppingBag size={16} strokeWidth={1.5} />
             {totalCartItems > 0 && (
-              <span className="absolute top-1 right-0 flex items-center justify-center min-w-[14px] h-[14px] bg-black text-white text-[8px] font-bold rounded-full px-1 shadow-sm border border-white">
+              <span className="absolute top-1 right-0 flex items-center justify-center min-w-3.5 h-3.5 bg-black text-white text-[8px] font-bold rounded-full px-1 shadow-sm border border-white">
                 {totalCartItems}
               </span>
             )}
@@ -517,10 +517,10 @@ export function EditorLayout() {
 
         {/* Right: Actions & Tools. Flex-1 allows dynamic resizing without breaking the container */}
         <div
-          className={`flex items-center gap-1.5 sm:gap-2 min-w-0 ${showMobileNameInput ? 'w-full justify-between' : 'justify-end flex-shrink'}`}
+          className={`flex items-center gap-1.5 sm:gap-2 min-w-0 ${showMobileNameInput ? 'w-full justify-between' : 'justify-end shrink'}`}
         >
           <div
-            className={`flex items-center transition-all min-w-0 ${showMobileNameInput ? 'flex-1 bg-[#fbfbfd] border border-black/[0.05] rounded-full p-1 shadow-sm' : 'sm:bg-[#fbfbfd] sm:border sm:border-black/[0.05] sm:rounded-full sm:p-1 sm:shadow-sm'}`}
+            className={`flex items-center transition-all min-w-0 ${showMobileNameInput ? 'flex-1 bg-[#fbfbfd] border border-black/5 rounded-full p-1 shadow-sm' : 'sm:bg-[#fbfbfd] sm:border sm:border-black/5 sm:rounded-full sm:p-1 sm:shadow-sm'}`}
           >
             {!showMobileNameInput && (
               <button
@@ -542,7 +542,7 @@ export function EditorLayout() {
                 value={designName || ''}
                 onChange={(e) => setDesignName(e.target.value)}
                 onBlur={() => setShowMobileNameInput(false)}
-                className="bg-transparent text-[11px] font-medium tracking-wide text-center w-full sm:max-w-[120px] md:max-w-[160px] py-1 outline-none text-black placeholder:text-neutral-400 truncate min-w-0"
+                className="bg-transparent text-[11px] font-medium tracking-wide text-center w-full sm:max-w-30 md:max-w-40 py-1 outline-none text-black placeholder:text-neutral-400 truncate min-w-0"
                 placeholder="Untitled Design"
               />
               <Pencil
@@ -571,7 +571,7 @@ export function EditorLayout() {
             <button
               type="button"
               onClick={() => setIsResetModalOpen(true)}
-              className={`items-center justify-center h-7 px-2.5 text-[10px] uppercase tracking-[0.1em] font-medium text-neutral-500 hover:text-black hover:bg-neutral-200 rounded-full transition-colors outline-none gap-1 shrink-0 ${showMobileNameInput ? 'hidden sm:flex' : 'flex'}`}
+              className={`items-center justify-center h-7 px-2.5 text-[10px] uppercase tracking-widest font-medium text-neutral-500 hover:text-black hover:bg-neutral-200 rounded-full transition-colors outline-none gap-1 shrink-0 ${showMobileNameInput ? 'hidden sm:flex' : 'flex'}`}
               title="New Design"
             >
               <Plus size={12} strokeWidth={1.5} />
@@ -582,7 +582,7 @@ export function EditorLayout() {
               type="button"
               onClick={handleManualSave}
               disabled={isSaving}
-              className={`items-center justify-center h-7 px-2.5 text-[10px] uppercase tracking-[0.1em] font-medium text-neutral-500 hover:text-black hover:bg-neutral-200 rounded-full transition-colors disabled:opacity-50 outline-none gap-1 shrink-0 ${showMobileNameInput ? 'hidden sm:flex' : 'flex'}`}
+              className={`items-center justify-center h-7 px-2.5 text-[10px] uppercase tracking-widest font-medium text-neutral-500 hover:text-black hover:bg-neutral-200 rounded-full transition-colors disabled:opacity-50 outline-none gap-1 shrink-0 ${showMobileNameInput ? 'hidden sm:flex' : 'flex'}`}
               title="Save Design"
             >
               {isSaving ? (
@@ -617,7 +617,7 @@ export function EditorLayout() {
       </header>
 
       <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-40 flex justify-center pointer-events-none w-[95vw] md:w-auto">
-        <div className="bg-white/95 backdrop-blur-2xl shadow-[0_20px_60px_rgba(0,0,0,0.06)] border border-black/[0.04] rounded-[2rem] p-1.5 pointer-events-auto max-w-full overflow-x-auto hide-scrollbar">
+        <div className="bg-white/95 backdrop-blur-2xl shadow-[0_20px_60px_rgba(0,0,0,0.06)] border border-black/4 rounded-4xl p-1.5 pointer-events-auto max-w-full overflow-x-auto hide-scrollbar">
           <Toolbar />
         </div>
       </div>
@@ -657,9 +657,9 @@ export function EditorLayout() {
       )}
 
       <div
-        className={`absolute top-0 left-0 h-full w-[280px] z-50 p-0 lg:p-4 lg:pt-[84px] transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] pointer-events-none ${showLeftDock ? 'translate-x-0' : '-translate-x-full'}`}
+        className={`absolute top-0 left-0 h-full w-70 z-50 p-0 lg:p-4 lg:pt-21 transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] pointer-events-none ${showLeftDock ? 'translate-x-0' : '-translate-x-full'}`}
       >
-        <div className="w-full h-auto max-h-[calc(100dvh-2rem)] bg-white/95 backdrop-blur-3xl shadow-[20px_0_40px_rgba(0,0,0,0.06)] lg:border border-black/[0.04] lg:rounded-3xl overflow-hidden flex flex-col pointer-events-auto relative">
+        <div className="w-full h-auto max-h-[calc(100dvh-2rem)] bg-white/95 backdrop-blur-3xl shadow-[20px_0_40px_rgba(0,0,0,0.06)] lg:border border-black/4 lg:rounded-3xl overflow-hidden flex flex-col pointer-events-auto relative">
           <div className="h-14 flex items-center justify-between px-6 border-b border-black/5 shrink-0">
             <span className="font-medium text-[10px] uppercase tracking-[0.2em] text-neutral-400">
               Apparel
@@ -696,9 +696,9 @@ export function EditorLayout() {
       </div>
 
       <div
-        className={`absolute top-0 right-0 h-full w-[320px] lg:w-[360px] z-50 p-0 lg:p-4 lg:pt-[84px] transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] pointer-events-none ${showRightDock ? 'translate-x-0' : 'translate-x-full'}`}
+        className={`absolute top-0 right-0 h-full w-[320px] lg:w-90 z-50 p-0 lg:p-4 lg:pt-21 transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] pointer-events-none ${showRightDock ? 'translate-x-0' : 'translate-x-full'}`}
       >
-        <div className="w-full h-full bg-white/95 backdrop-blur-3xl shadow-[-20px_0_40px_rgba(0,0,0,0.06)] lg:border border-black/[0.04] lg:rounded-3xl overflow-hidden flex flex-col pointer-events-auto relative">
+        <div className="w-full h-full bg-white/95 backdrop-blur-3xl shadow-[-20px_0_40px_rgba(0,0,0,0.06)] lg:border border-black/4 lg:rounded-3xl overflow-hidden flex flex-col pointer-events-auto relative">
           <div className="h-14 flex items-center justify-between px-6 border-b border-black/5 shrink-0">
             <span className="font-medium text-[10px] uppercase tracking-[0.2em] text-neutral-400">
               Layers & Settings

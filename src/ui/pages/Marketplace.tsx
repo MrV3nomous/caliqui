@@ -66,10 +66,13 @@ function HoverHydrate3D({ product, onOpen }: { product: MarketplaceItem; onOpen:
   const [isHovered, setIsHovered] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
   const [isInView, setIsInView] = useState(false);
+  const [isReady, setIsReady] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<HTMLDivElement>(null);
+  const [pointerDownTime, setPointerDownTime] = useState(0);
 
+  // 1. Intersection Observer to detect when the card enters the screen
   useEffect(() => {
     const observer = new IntersectionObserver(
       ([entry]) => {
@@ -84,6 +87,7 @@ function HoverHydrate3D({ product, onOpen }: { product: MarketplaceItem; onOpen:
     return () => observer.disconnect();
   }, []);
 
+  // 2. Queue Manager to prevent WebGL Context Limits
   useEffect(() => {
     let mounted = true;
     let checkInterval: ReturnType<typeof setInterval>;
@@ -104,6 +108,7 @@ function HoverHydrate3D({ product, onOpen }: { product: MarketplaceItem; onOpen:
     };
   }, [isInView, snapshot, isCapturing]);
 
+  // 3. Capture Snapshot & Kill Engine
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
     if (isCapturing) {
@@ -137,38 +142,59 @@ function HoverHydrate3D({ product, onOpen }: { product: MarketplaceItem; onOpen:
     };
   }, [isCapturing]);
 
+  // 4. Seamless Wake-up Timer
+  useEffect(() => {
+    if (isHovered) {
+      const t = setTimeout(() => setIsReady(true), 400);
+      return () => clearTimeout(t);
+    } else {
+      setIsReady(false);
+    }
+  }, [isHovered]);
+
   const shouldRender3D = isCapturing || isHovered;
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: Visual hover trigger for 3D hydration
+    // biome-ignore lint/a11y/noStaticElementInteractions: Smart click handler for 3D interaction
     <div
       ref={observerRef}
-      className="absolute inset-0 w-full h-full cursor-pointer touch-none bg-transparent overflow-hidden rounded-2xl"
+      className="absolute inset-0 w-full h-full touch-none bg-transparent overflow-hidden rounded-2xl"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
+      onPointerDown={() => setPointerDownTime(Date.now())}
+      onPointerUp={() => {
+        // Smart Click: < 250ms = opens drawer. > 250ms = dragging 3D model.
+        if (Date.now() - pointerDownTime < 250) {
+          onOpen();
+        }
+      }}
     >
+      {/* Loading Shimmer */}
       {!snapshot && (
         <div className="absolute inset-0 w-full h-full flex flex-col items-center justify-center bg-[#f8f8f8] animate-pulse z-0">
           <Loader2 size={24} strokeWidth={1.5} className="animate-spin text-neutral-300" />
         </div>
       )}
 
+      {/* Static Snapshot */}
       {snapshot && (
         <img
           src={snapshot}
           alt={product.name}
           loading="lazy"
-          className={`absolute inset-0 w-full h-full object-cover mix-blend-multiply transition-opacity duration-700 z-10 ${
-            shouldRender3D && !isCapturing ? 'opacity-0' : 'opacity-100'
+          draggable={false}
+          className={`absolute inset-0 w-full h-full object-cover mix-blend-multiply transition-opacity duration-500 z-10 pointer-events-none ${
+            isHovered && isReady ? 'opacity-0' : 'opacity-100'
           }`}
         />
       )}
 
+      {/* Live WebGL Canvas */}
       {shouldRender3D && (
         <div
           ref={containerRef}
-          className={`absolute inset-0 w-full h-full transition-opacity duration-500 z-20 ${
-            isCapturing && !isHovered ? 'pointer-events-none' : ''
+          className={`absolute inset-0 w-full h-full transition-opacity duration-300 z-20 ${
+            isCapturing && !isHovered ? 'pointer-events-none' : 'cursor-grab active:cursor-grabbing'
           }`}
           style={{ opacity: isCapturing && !isHovered ? 0.01 : 1 }}
         >
@@ -180,13 +206,6 @@ function HoverHydrate3D({ product, onOpen }: { product: MarketplaceItem; onOpen:
           />
         </div>
       )}
-
-      <button
-        type="button"
-        aria-label={`View details for ${product.name}`}
-        className="absolute inset-0 w-full h-full outline-none border-0 bg-transparent z-30 cursor-pointer"
-        onClick={onOpen}
-      />
     </div>
   );
 }

@@ -62,7 +62,7 @@ export const generatePrintFile = async (decals: DecalData[]): Promise<Blob> => {
         }
       };
 
-      img.src = decal.src;
+      img.src = decal.src || '';
     });
 
     const drawAllAndResolve = () => {

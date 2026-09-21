@@ -58,14 +58,15 @@ export interface DecalData {
   type: ToolType;
   shapeType?: ShapeType;
   name: string;
-  src?: string; // Made optional so we can strip it from the DB payload
-  originalSrc?: string; // Made optional
+  src?: string;
+  originalSrc?: string;
   meshName?: string;
   position: [number, number, number];
   rotation: [number, number, number];
   scale: number;
   scaleX?: number;
   scaleY?: number;
+  zDepth?: number;
   rotationOffset?: number;
   groupId?: string;
 
@@ -198,6 +199,7 @@ interface EditorState {
 
   addUserAsset: (blob: Blob, aspectRatio: number) => Promise<string>;
   removeUserAsset: (id: string) => Promise<void>;
+  replaceUserAsset: (oldId: string, blob: Blob, aspectRatio: number) => Promise<string>;
 
   saveDesign: () => Promise<string>;
 }
@@ -223,16 +225,13 @@ const applyLineDash = (ctx: CanvasRenderingContext2D, style: string, width: numb
   else ctx.setLineDash([]);
 };
 
-// STRIP HEAVY DATA: Removes heavy base64 strings before saving to DB or LocalStorage
 export const extractLightweightManifest = (decals: DecalData[]): DecalData[] => {
   return decals.map((d) => {
     const blueprint = { ...d };
     if (blueprint.type === 'text' || blueprint.type === 'shape') {
-      // Shapes and text are purely math. We don't need their base64 images saved at all.
       delete blueprint.src;
       delete blueprint.originalSrc;
     } else if (blueprint.type === 'image' || blueprint.type === 'drawing') {
-      // Images need their cloud URL (originalSrc), but we ditch the filtered base64 composite (src)
       delete blueprint.src;
     }
     return blueprint;
@@ -405,6 +404,7 @@ export function generateAssetTexture(config: Partial<DecalData>): string {
     borderStyle = 'solid',
     borderRadius = 0,
     letterSpacing = 0,
+    lineHeight = 1.2,
     arc = 0,
     wave = 0,
   } = config;
@@ -607,54 +607,65 @@ export function generateAssetTexture(config: Partial<DecalData>): string {
 
     applyLineDash(ctx, borderStyle, strokeWidth);
 
+    const lines = text.split('\n');
+    const lineSpacing = fontSize * lineHeight;
+    const totalHeight = lineSpacing * (lines.length - 1);
+    let currentY = startY - totalHeight / 2;
+
     if (arc !== 0 || wave !== 0) {
       ctx.textAlign = 'center';
-      const chars = text.split('');
-      const totalWidth = ctx.measureText(text).width;
 
-      let currentX = startX - totalWidth / 2;
+      lines.forEach((line) => {
+        const chars = line.split('');
+        const totalWidth = ctx.measureText(line).width;
+        let currentX = startX - totalWidth / 2;
 
-      chars.forEach((char, _i) => {
-        ctx.save();
-        const charWidth = ctx.measureText(char).width;
-        const charCenterX = currentX + charWidth / 2;
+        chars.forEach((char) => {
+          ctx.save();
+          const charWidth = ctx.measureText(char).width;
+          const charCenterX = currentX + charWidth / 2;
 
-        let offsetY = 0;
-        let rotation = 0;
+          let offsetY = 0;
+          let rotation = 0;
 
-        if (wave !== 0) {
-          const waveAmp = (wave / 100) * 80;
-          const freq = Math.PI / totalWidth;
-          offsetY += Math.sin((charCenterX - startX) * freq) * waveAmp;
-        }
+          if (wave !== 0) {
+            const waveAmp = (wave / 100) * 80;
+            const freq = Math.PI / totalWidth;
+            offsetY += Math.sin((charCenterX - startX) * freq) * waveAmp;
+          }
 
-        if (arc !== 0) {
-          const arcRadius = 10000 / arc;
-          const angle = (charCenterX - startX) / arcRadius;
-          offsetY += arcRadius - Math.cos(angle) * arcRadius;
-          rotation = angle;
-        }
+          if (arc !== 0) {
+            const arcRadius = 10000 / arc;
+            const angle = (charCenterX - startX) / arcRadius;
+            offsetY += arcRadius - Math.cos(angle) * arcRadius;
+            rotation = angle;
+          }
 
-        ctx.translate(charCenterX, startY + offsetY);
-        ctx.rotate(rotation);
+          ctx.translate(charCenterX, currentY + offsetY);
+          ctx.rotate(rotation);
 
+          if (strokeWidth > 0) {
+            ctx.lineWidth = strokeWidth;
+            ctx.strokeStyle = strokeColor;
+            ctx.strokeText(char, 0, 0);
+          }
+          ctx.fillText(char, 0, 0);
+
+          ctx.restore();
+          currentX += charWidth;
+        });
+        currentY += lineSpacing;
+      });
+    } else {
+      lines.forEach((line) => {
         if (strokeWidth > 0) {
           ctx.lineWidth = strokeWidth;
           ctx.strokeStyle = strokeColor;
-          ctx.strokeText(char, 0, 0);
+          ctx.strokeText(line, startX, currentY);
         }
-        ctx.fillText(char, 0, 0);
-
-        ctx.restore();
-        currentX += charWidth;
+        ctx.fillText(line, startX, currentY);
+        currentY += lineSpacing;
       });
-    } else {
-      if (strokeWidth > 0) {
-        ctx.lineWidth = strokeWidth;
-        ctx.strokeStyle = strokeColor;
-        ctx.strokeText(text, startX, startY);
-      }
-      ctx.fillText(text, startX, startY);
     }
   }
   return canvas.toDataURL('image/png');
@@ -687,13 +698,14 @@ export const getDefaultConfig = (_type: ToolType): Partial<DecalData> => ({
   invert: 0,
   blendMode: 'normal',
   letterSpacing: 0,
-  lineHeight: 1,
+  lineHeight: 1.2,
   tintOpacity: 0,
   arc: 0,
   wave: 0,
   squeezeX: 1,
   squeezeY: 1,
   scale: 0.2,
+  zDepth: 0.15, // Fixed safety Z-depth constraint to prevent decals bleeding to the back
   rotationOffset: 0,
   aspectRatio: 1,
 });
@@ -733,7 +745,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   aiFeedbackMessage: null,
 
   tshirtColor: '#ffffff',
-  apparelModel: 'tshirtman', // Default to men's shirt
+  apparelModel: 'tshirtman',
   cameraView: 'front',
 
   userAssets: [],
@@ -819,7 +831,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (initialDecals.length > 0) {
       Promise.all(
         initialDecals.map(async (d) => {
-          // HYDRATION LOGIC: Rebuilding the heavy Base64 strings purely for client-side rendering
           if (d.type === 'shape' || d.type === 'text') {
             const baseSrc = generateAssetTexture(d);
             const { src: finalSrc, aspectRatio } = await applyImageFilters({
@@ -1177,7 +1188,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             const { id, changes } = updateReq;
             if (!id || !changes) return;
 
-            // Aggressive Clamping for WebGL/Canvas Safety
             if (changes.scale !== undefined)
               changes.scale = Math.min(Math.max(changes.scale, 0.01), 10);
             if (changes.scaleX !== undefined)
@@ -1252,6 +1262,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setCameraView: (view) => set({ cameraView: view }),
 
   addUserAsset: async (blob: Blob, aspectRatio: number) => {
+    const state = get();
+    if (state.userAssets.length >= 6) {
+      throw new Error('Maximum of 6 image assets allowed. Please remove one before uploading.');
+    }
+
     const id = crypto.randomUUID();
     const src = URL.createObjectURL(blob);
 
@@ -1282,6 +1297,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
   },
 
+  replaceUserAsset: async (oldId: string, blob: Blob, aspectRatio: number) => {
+    await get().removeUserAsset(oldId);
+    return await get().addUserAsset(blob, aspectRatio);
+  },
+
   saveDesign: async () => {
     const state = get();
     const {
@@ -1292,42 +1312,35 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       throw new Error('Must be logged in to save');
     }
 
-    // 1. Deep copy decals to avoid mutating live editor state during processing
     const processingDecals = JSON.parse(JSON.stringify(state.decals)) as DecalData[];
 
-    // 2. Upload any local base64/blob image assets to Supabase Storage before saving
     await Promise.all(
       processingDecals.map(async (decal) => {
         if ((decal.type === 'image' || decal.type === 'drawing') && decal.originalSrc) {
-          // If the originalSrc is a massive local data URL or blob, we must compress and upload it
           if (decal.originalSrc.startsWith('data:') || decal.originalSrc.startsWith('blob:')) {
             try {
               const blob = await dataUrlToBlob(decal.originalSrc);
-              // Enforce the 90KB strict compression rule
               const { blob: compressedBlob } = await processAndCompressImage(blob, 90 * 1024);
 
               const publicUrl = await uploadAssetToStorage(compressedBlob, user.id);
               if (publicUrl) {
-                // Swap the heavy local data URL for the permanent Supabase URL
                 decal.originalSrc = publicUrl;
               }
             } catch (err) {
               console.error('Failed to compress/upload decal asset during save:', err);
-              // Fallback to storing the raw string if upload fails to prevent data loss
             }
           }
         }
       }),
     );
 
-    // 3. NEW: Strip all Base64 Image strings from the payload (Manifest Extraction)
     const lightweightManifest = extractLightweightManifest(processingDecals);
 
     const designPayload = {
       user_id: user.id,
       name: state.designName || 'Untitled Design',
       canvas_state: lightweightManifest as unknown as Record<string, unknown>[],
-      tshirt_color: state.tshirtColor,
+      tshirt_color: state.tshirtColor || '#ffffff',
       apparel_model: state.apparelModel,
       thumbnail_url: 'https://via.placeholder.com/512?text=3D+Model',
     };
@@ -1344,8 +1357,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (updateData && updateData.length > 0) {
         return state.activeDesignId;
       }
-
-      console.warn('Cached Design ID not found in database. Creating a new record instead.');
     }
 
     const { data: insertData, error: insertError } = await supabase
@@ -1367,7 +1378,6 @@ useEditorStore.subscribe((state) => {
   clearTimeout(saveTimeout);
   saveTimeout = setTimeout(() => {
     try {
-      // Apply Manifest Extraction before saving to prevent crashing the 5MB LocalStorage limit
       const lightweightManifest = extractLightweightManifest(state.decals);
 
       localStorage.setItem(

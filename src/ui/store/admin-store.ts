@@ -1,6 +1,13 @@
 import { create } from 'zustand';
 import { supabase } from '@/shared/lib/supabase';
 
+export type AdminRole =
+  | 'super_admin'
+  | 'fulfillment_manager'
+  | 'catalog_manager'
+  | 'support_agent'
+  | null;
+
 export interface OrderLineItem {
   id: string;
   order_id: string;
@@ -59,10 +66,32 @@ export interface NewMarketplaceItem {
   available_sizes: string[];
 }
 
+export interface TicketMessage {
+  id: string;
+  ticket_id: string;
+  sender_id: string;
+  is_admin_reply: boolean;
+  message: string;
+  created_at: string;
+}
+
+export interface SupportTicket {
+  id: string;
+  customer_id: string;
+  order_id: string | null;
+  subject: string;
+  category: string;
+  status: 'open' | 'in_progress' | 'resolved';
+  created_at: string;
+  updated_at: string;
+  messages?: TicketMessage[];
+}
+
 interface AdminState {
-  isAdmin: boolean | null;
+  adminRole: AdminRole;
   orders: GlobalOrder[];
   adminDesigns: AdminDesign[];
+  tickets: SupportTicket[];
   isLoading: boolean;
 
   verifyAdminAccess: () => Promise<boolean>;
@@ -78,32 +107,31 @@ interface AdminState {
   fetchAdminDesigns: () => Promise<void>;
   uploadMarketplaceAsset: (file: File) => Promise<string>;
   createMarketplaceItem: (item: NewMarketplaceItem) => Promise<void>;
+
+  // Support Methods
+  fetchTickets: () => Promise<void>;
+  replyToTicket: (ticketId: string, message: string) => Promise<void>;
+  resolveTicket: (ticketId: string) => Promise<void>;
 }
 
 export const useAdminStore = create<AdminState>((set, get) => ({
-  isAdmin: null,
+  adminRole: null,
   orders: [],
   adminDesigns: [],
+  tickets: [],
   isLoading: true,
 
   verifyAdminAccess: async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
-      set({ isAdmin: false, isLoading: false });
-      return false;
+    // Relying on the ultra-secure RPC function we just created
+    const { data: role, error } = await supabase.rpc('get_my_admin_role');
+
+    if (!error && role) {
+      set({ adminRole: role as AdminRole });
+      return true;
     }
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single();
-
-    const isAdmin = profile?.role === 'admin';
-    set({ isAdmin });
-    return isAdmin;
+    set({ adminRole: null, isLoading: false });
+    return false;
   },
 
   fetchAdminData: async (background = false) => {
@@ -119,7 +147,6 @@ export const useAdminStore = create<AdminState>((set, get) => ({
   },
 
   updateOrderItemStatus: async (itemId, status, courier, tracking) => {
-    // 1. Optimistic Update: Instantly change the UI without waiting for the network
     const previousOrders = get().orders;
     set((state) => ({
       orders: state.orders.map((order) => {
@@ -132,14 +159,13 @@ export const useAdminStore = create<AdminState>((set, get) => ({
               status,
               courier_name: courier || item.courier_name,
               tracking_number: tracking || item.tracking_number,
-              updated_at: new Date().toISOString(), // Optimistically update local timestamp
+              updated_at: new Date().toISOString(),
             };
           }
           return item;
         });
 
         if (hasChanges) {
-          // Re-calculate the global order status locally
           const itemsWithStatus = newItems.map((i) => i.status || order.status || 'draft');
           let globalStatus: GlobalOrder['status'] = 'processing';
           if (itemsWithStatus.every((s) => s === 'delivered')) globalStatus = 'delivered';
@@ -158,7 +184,6 @@ export const useAdminStore = create<AdminState>((set, get) => ({
       }),
     }));
 
-    // 2. Database Execution
     const updates = {
       status,
       courier_name: courier || null,
@@ -168,12 +193,10 @@ export const useAdminStore = create<AdminState>((set, get) => ({
     const { error } = await supabase.from('order_items').update(updates).eq('id', itemId);
 
     if (!error) {
-      // Background re-fetch to ensure sync
       get().fetchAdminData(true);
     } else {
       console.error('Failed to update item status:', error);
       alert('Failed to update item status. Check permissions.');
-      // Revert optimistic update on failure
       set({ orders: previousOrders });
     }
   },
@@ -208,5 +231,64 @@ export const useAdminStore = create<AdminState>((set, get) => ({
       .from('marketplace_items')
       .insert([{ ...item, is_active: true }]);
     if (error) throw error;
+  },
+
+  // --- NEW: SUPPORT DESK METHODS ---
+  fetchTickets: async () => {
+    const { data, error } = await supabase
+      .from('support_tickets')
+      .select('*, messages:ticket_messages(*)')
+      .order('updated_at', { ascending: false });
+
+    if (!error && data) {
+      // Sort messages chronologically
+      const sortedData = data.map((ticket) => ({
+        ...ticket,
+        messages: ticket.messages?.sort(
+          (a: TicketMessage, b: TicketMessage) =>
+            new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+        ),
+      }));
+      set({ tickets: sortedData as SupportTicket[] });
+    }
+  },
+
+  replyToTicket: async (ticketId: string, message: string) => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const { error } = await supabase.from('ticket_messages').insert({
+      ticket_id: ticketId,
+      sender_id: user.id,
+      is_admin_reply: true,
+      message,
+    });
+
+    if (!error) {
+      // Update ticket status to in_progress to show we've handled it
+      await supabase
+        .from('support_tickets')
+        .update({ status: 'in_progress', updated_at: new Date().toISOString() })
+        .eq('id', ticketId);
+
+      get().fetchTickets();
+    } else {
+      alert('Failed to send reply. Please try again.');
+    }
+  },
+
+  resolveTicket: async (ticketId: string) => {
+    const { error } = await supabase
+      .from('support_tickets')
+      .update({ status: 'resolved', updated_at: new Date().toISOString() })
+      .eq('id', ticketId);
+
+    if (!error) {
+      get().fetchTickets();
+    } else {
+      alert('Failed to resolve ticket.');
+    }
   },
 }));

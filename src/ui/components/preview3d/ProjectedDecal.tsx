@@ -105,7 +105,7 @@ export function ProjectedDecal({
 
     const displayImg = new Image();
     displayImg.crossOrigin = 'anonymous';
-    displayImg.src = decal.src;
+    displayImg.src = decal.src || '';
     displayImg.onload = () => {
       setTexture((prevTexture) => {
         const newTex = new THREE.Texture(displayImg);
@@ -131,7 +131,7 @@ export function ProjectedDecal({
     ) {
       const rawImg = new Image();
       rawImg.crossOrigin = 'anonymous';
-      rawImg.src = decal.src;
+      rawImg.src = decal.src || '';
       rawImg.onload = () => {
         const w = rawImg.naturalWidth || 512;
         const h = rawImg.naturalHeight || 512;
@@ -173,10 +173,8 @@ export function ProjectedDecal({
     }
   }
 
-  // FIX 1: Dynamically scale projection depth so huge decals wrap around the curved chest properly
-  const zDepth = 0.6;
+  const zDepth = decal.zDepth ?? 0.15;
 
-  // FIX 2: Prevent the visual handles from ever collapsing below 0.15
   const MIN_UI_SIZE = 0.15;
   const uiSx = Math.max(Math.abs(sx), MIN_UI_SIZE);
   const uiSy = Math.max(Math.abs(sy), MIN_UI_SIZE);
@@ -270,8 +268,8 @@ export function ProjectedDecal({
             polygonOffsetFactor={-1 - index * 0.5}
             depthTest={true}
             depthWrite={false}
-            roughness={0.7} // Slightly smoother than the shirt, like dried ink
-            metalness={0.0} // Ink is not metallic
+            roughness={0.7}
+            metalness={0.0}
             color={
               isSelected && !isEditingText ? new THREE.Color(0xddddff) : new THREE.Color(0xffffff)
             }
@@ -286,27 +284,26 @@ export function ProjectedDecal({
             {isEditingText && decal.type === 'text' && (
               <Html center zIndexRange={[100, 0]} position={[0, 0, -0.05]}>
                 <div className="bg-white/95 p-2 rounded-lg shadow-2xl border border-blue-500/50 backdrop-blur-xl flex items-center justify-center min-w-50 pointer-events-auto">
-                  <input
-                    // biome-ignore lint/a11y/noAutofocus: Intentional
+                  <textarea
+                    // biome-ignore lint/a11y/noAutofocus: Intentional UX behavior for inline text editing
                     autoFocus
                     defaultValue={decal.text}
                     onBlur={(e) => handleTextSubmit(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleTextSubmit(e.currentTarget.value);
                       if (e.key === 'Escape') setIsEditingText(false);
                     }}
-                    className="w-full text-center font-bold bg-transparent outline-none text-neutral-800"
-                    style={{ fontSize: '24px' }}
+                    className="w-full text-center font-bold bg-transparent outline-none text-neutral-800 resize-none"
+                    style={{ fontSize: '24px', minHeight: '80px', overflow: 'hidden' }}
+                    rows={Math.max(3, decal.text?.split('\n').length || 1)}
                   />
                 </div>
               </Html>
             )}
 
-            {/* biome-ignore lint/a11y/noStaticElementInteractions: WebGL mesh */}
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: WebGL mesh interaction map */}
             <mesh
               userData={{ isDecalHitbox: true }}
-              // FIX 3: Push the invisible drag shield super close to the shirt surface (0.015)
-              position={[0, 0, isSelected ? 0.015 : 0.01]}
+              position={[0, 0, zDepth / 2]}
               scale={isSelected ? [uiSx * 1.05, uiSy * 1.05, 1] : [uiSx, uiSy, 1]}
               castShadow={false}
               receiveShadow={false}
@@ -528,8 +525,7 @@ export function ProjectedDecal({
                 }
               }}
             >
-              {/* FIX 4: Flatten the drag shield to 0.1 so it doesn't bulge out and swallow handles */}
-              <boxGeometry args={[1, 1, 0.1]} />
+              <boxGeometry args={[1, 1, zDepth]} />
               <meshBasicMaterial transparent opacity={0} depthTest={false} depthWrite={false} />
             </mesh>
 
@@ -537,8 +533,7 @@ export function ProjectedDecal({
               !isEditingText &&
               globalToolMode === 'default' &&
               !useEditorStore.getState().showMarqueeBox && (
-                // FIX 5: Float the handles at Z=0.1 so they sit safely in front of the drag shield
-                <group position={[0, 0, 0.0025]}>
+                <group position={[0, 0, zDepth / 2 + 0.01]}>
                   <lineSegments
                     geometry={borderGeo}
                     scale={[uiSx, uiSy, 1]}

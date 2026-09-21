@@ -203,7 +203,7 @@ function ViewerModel({
   if (!primaryMesh) return <primitive object={copiedScene} />;
 
   return (
-    <group scale={1.15}>
+    <group scale={1.1}>
       <primitive object={copiedScene} />
       {hydratedDecals.map((decal, index) => (
         <DecalErrorBoundary key={decal.id || index}>

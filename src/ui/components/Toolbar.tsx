@@ -28,6 +28,7 @@ import {
   Pill,
   RectangleHorizontal,
   Redo2,
+  RefreshCw,
   Scissors,
   Shapes,
   Shield,
@@ -101,6 +102,7 @@ export function Toolbar() {
     userAssets,
     addUserAsset,
     removeUserAsset,
+    replaceUserAsset,
     undo,
     redo,
     cut,
@@ -117,11 +119,14 @@ export function Toolbar() {
   } = useEditorStore();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const replaceInputRef = useRef<HTMLInputElement>(null);
+
   const [activeMenu, setActiveMenu] = useState<
     'shapes' | 'library' | 'effects' | 'ai' | 'camera' | null
   >(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [aiPrompt, setAiPrompt] = useState('');
+  const [replaceTargetId, setReplaceTargetId] = useState<string | null>(null);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -149,6 +154,19 @@ export function Toolbar() {
       setActiveMenu(null);
     } catch (error) {
       console.error('Upload failed', error);
+      alert((error as Error).message);
+    }
+  };
+
+  const processReplacement = async (file: File) => {
+    if (!replaceTargetId) return;
+    try {
+      const { blob, aspectRatio } = await processAndCompressImage(file);
+      await replaceUserAsset(replaceTargetId, blob, aspectRatio);
+      setReplaceTargetId(null);
+    } catch (error) {
+      console.error('Replacement failed', error);
+      alert((error as Error).message);
     }
   };
 
@@ -163,7 +181,6 @@ export function Toolbar() {
 
   const activeEffect = EFFECTS_LIBRARY.find((effect) => effect.id === globalToolMode);
 
-  // Pure Apple-style ToolButton - Refined for elegance
   const ToolButton = ({
     active,
     onClick,
@@ -194,13 +211,11 @@ export function Toolbar() {
     return createPortal(content, document.body);
   };
 
-  // Ultra-premium, sleek popup container
   const popupClasses =
     'fixed bottom-24 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-xl border border-black/[0.04] rounded-[2rem] shadow-[0_20px_60px_rgba(0,0,0,0.08)] p-6 z-[500] animate-in zoom-in-95 duration-200 cursor-default';
 
   return (
     <div className="flex flex-row items-center justify-start md:justify-center gap-1 w-full h-full p-1 overflow-x-auto scrollbar-hide">
-      {/* 1. SELECTION */}
       <ToolButton
         title="Pointer"
         active={globalToolMode === 'default'}
@@ -218,7 +233,6 @@ export function Toolbar() {
 
       <Divider />
 
-      {/* 2. CREATION */}
       <ToolButton title="Text" onClick={() => addTool('text')}>
         <Type size={16} strokeWidth={1.5} />
       </ToolButton>
@@ -230,6 +244,7 @@ export function Toolbar() {
       >
         <Library size={16} strokeWidth={1.5} />
       </ToolButton>
+
       {activeMenu === 'library' &&
         renderPopup(
           <div ref={menuRef} className={`${popupClasses} w-[340px]`}>
@@ -237,10 +252,13 @@ export function Toolbar() {
               <span className="text-[10px] font-medium text-neutral-500 uppercase tracking-[0.2em]">
                 My Assets
               </span>
-              <span className="text-[9px] font-medium bg-neutral-100 text-neutral-500 px-2 py-0.5 rounded-full tracking-widest">
-                {userAssets.length} Saved
+              <span
+                className={`text-[9px] font-medium px-2 py-0.5 rounded-full tracking-widest ${userAssets.length >= 6 ? 'bg-red-50 text-red-500' : 'bg-neutral-100 text-neutral-500'}`}
+              >
+                {userAssets.length}/6 Saved
               </span>
             </div>
+
             <input
               type="file"
               ref={fileInputRef}
@@ -251,14 +269,26 @@ export function Toolbar() {
               accept="image/*"
               className="hidden"
             />
+            <input
+              type="file"
+              ref={replaceInputRef}
+              onChange={(e) => {
+                if (e.target.files?.[0]) processReplacement(e.target.files[0]);
+                e.target.value = '';
+              }}
+              accept="image/*"
+              className="hidden"
+            />
+
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="w-full flex flex-col items-center justify-center gap-3 bg-[#fbfbfd] border border-black/[0.04] hover:border-black/20 rounded-[1.5rem] p-6 transition-all mb-5 outline-none"
+              disabled={userAssets.length >= 6}
+              className={`w-full flex flex-col items-center justify-center gap-3 bg-[#fbfbfd] border border-black/[0.04] rounded-[1.5rem] p-6 transition-all mb-5 outline-none ${userAssets.length >= 6 ? 'opacity-50 cursor-not-allowed' : 'hover:border-black/20'}`}
             >
               <UploadCloud size={20} strokeWidth={1.5} className="text-neutral-400" />
               <span className="text-[10px] uppercase tracking-[0.1em] font-medium text-neutral-500">
-                Click to Upload
+                {userAssets.length >= 6 ? 'Storage Full' : 'Click to Upload'}
               </span>
             </button>
             <div className="grid grid-cols-3 gap-3 max-h-[220px] overflow-y-auto pr-1 hide-scrollbar">
@@ -281,16 +311,31 @@ export function Toolbar() {
                       className="max-w-full max-h-full object-contain drop-shadow-sm transition-transform duration-300 group-hover:scale-105"
                     />
                   </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      removeUserAsset(asset.id);
-                    }}
-                    className="absolute top-1.5 right-1.5 p-1.5 bg-white/90 text-neutral-400 hover:text-red-500 rounded-full opacity-0 group-hover:opacity-100 shadow-sm outline-none transition-all"
-                  >
-                    <Trash2 size={12} strokeWidth={1.5} />
-                  </button>
+                  <div className="absolute top-1.5 right-1.5 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setReplaceTargetId(asset.id);
+                        replaceInputRef.current?.click();
+                      }}
+                      title="Replace Asset"
+                      className="p-1.5 bg-white/90 text-neutral-400 hover:text-blue-500 rounded-full shadow-sm outline-none"
+                    >
+                      <RefreshCw size={12} strokeWidth={2} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeUserAsset(asset.id);
+                      }}
+                      title="Delete Asset"
+                      className="p-1.5 bg-white/90 text-neutral-400 hover:text-red-500 rounded-full shadow-sm outline-none"
+                    >
+                      <Trash2 size={12} strokeWidth={1.5} />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -335,7 +380,6 @@ export function Toolbar() {
 
       <Divider />
 
-      {/* 3. EFFECTS */}
       <ToolButton
         title="Eraser"
         active={globalToolMode === 'erase'}
@@ -392,7 +436,6 @@ export function Toolbar() {
 
       <Divider />
 
-      {/* 4. CAMERA ANGLES */}
       <ToolButton
         title="Camera Views"
         active={activeMenu === 'camera'}
@@ -426,7 +469,6 @@ export function Toolbar() {
 
       <Divider />
 
-      {/* 5. GLOBAL ACTIONS */}
       <ToolButton
         title="Undo"
         onClick={undo}
@@ -463,7 +505,6 @@ export function Toolbar() {
 
       <Divider />
 
-      {/* 6. AI ASSISTANT */}
       <ToolButton
         title="AI Assistant"
         onClick={(e) => toggleMenu('ai', e)}

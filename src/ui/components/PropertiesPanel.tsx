@@ -85,7 +85,7 @@ function SliderControl({
           {prop.label}
         </Label>
       </div>
-      <div className="flex gap-4 items-center bg-[#fbfbfd] border border-black/[0.04] p-2 rounded-2xl transition-all hover:border-black/10">
+      <div className="flex gap-4 items-center bg-white border border-black/[0.04] p-2 rounded-2xl transition-all hover:border-black/10">
         <input
           type="range"
           min={prop.min}
@@ -96,7 +96,7 @@ function SliderControl({
           onChange={handleSliderChange}
           className="flex-1 accent-black h-1 bg-black/10 rounded-full appearance-none ml-2 cursor-pointer outline-none"
         />
-        <div className="flex items-center justify-center w-12 shrink-0 bg-white border border-black/5 rounded-xl px-1 py-1.5 shadow-sm">
+        <div className="flex items-center justify-center w-12 shrink-0 bg-[#fbfbfd] border border-black/5 rounded-xl px-1 py-1.5 shadow-sm">
           <input
             type="text"
             value={isFocused ? localText : calculatedDisplay}
@@ -167,7 +167,7 @@ function TextControl({
       <Label className="text-[9px] font-medium text-neutral-400 uppercase tracking-[0.2em] block m-0">
         {prop.label}
       </Label>
-      <div className="bg-[#fbfbfd] border border-black/[0.04] p-1.5 rounded-2xl transition-all hover:border-black/10">
+      <div className="bg-white border border-black/[0.04] p-1.5 rounded-2xl transition-all hover:border-black/10">
         <input
           type="text"
           value={isFocused ? localText : value}
@@ -264,7 +264,7 @@ export function PropertiesPanel({ activeDecalId }: { activeDecalId: string }) {
             <Label className="text-[9px] font-medium text-neutral-400 uppercase tracking-[0.2em] block m-0">
               {prop.label}
             </Label>
-            <div className="bg-[#fbfbfd] border border-black/[0.04] hover:border-black/10 p-1.5 rounded-2xl transition-all">
+            <div className="bg-white border border-black/[0.04] hover:border-black/10 p-1.5 rounded-2xl transition-all">
               <select
                 className="w-full bg-transparent border-0 rounded-xl text-[11px] tracking-wide font-medium text-black p-2 outline-none cursor-pointer"
                 value={value}
@@ -291,14 +291,14 @@ export function PropertiesPanel({ activeDecalId }: { activeDecalId: string }) {
             <Label className="text-[9px] font-medium text-neutral-400 uppercase tracking-[0.2em] block m-0">
               {prop.label}
             </Label>
-            <div className="flex bg-[#fbfbfd] border border-black/[0.04] p-1.5 rounded-2xl justify-between gap-1 overflow-hidden">
+            <div className="flex bg-white border border-black/[0.04] p-1.5 rounded-2xl justify-between gap-1 overflow-hidden">
               {prop.options?.map((opt) => (
                 <button
                   key={opt.value}
                   type="button"
                   className={`flex-1 flex justify-center items-center text-[11px] py-2 rounded-xl transition-all outline-none min-w-0 ${
                     value === opt.value
-                      ? 'bg-white shadow-sm text-black font-medium border border-black/5'
+                      ? 'bg-[#fbfbfd] shadow-sm text-black font-medium border border-black/5'
                       : 'text-neutral-400 hover:text-black font-medium'
                   }`}
                   onClick={() => {
@@ -342,6 +342,34 @@ export function PropertiesPanel({ activeDecalId }: { activeDecalId: string }) {
             </>
           )}
         </button>
+      )}
+
+      {/* Explicitly Add Font Size Controller for Text Decals */}
+      {activeDecal.type === 'text' && (
+        <div className="space-y-4 min-w-0">
+          <div className="flex items-center justify-between pr-1 border-b border-black/[0.02] pb-2">
+            <h4 className="text-[10px] font-medium text-neutral-500 uppercase tracking-[0.25em] pl-1">
+              Typography
+            </h4>
+            <button
+              type="button"
+              onClick={() => {
+                saveHistory();
+                updateVisuals({ fontSize: defaults.fontSize });
+              }}
+              className="text-neutral-400 hover:text-black transition-colors outline-none"
+              title="Reset Font Size"
+            >
+              <RotateCcw size={12} strokeWidth={1.5} />
+            </button>
+          </div>
+          <SliderControl
+            prop={{ id: 'fontSize', label: 'Font Size', type: 'slider', min: 8, max: 400, step: 1 }}
+            activeDecal={activeDecal}
+            updateVisuals={updateVisuals}
+            saveHistory={saveHistory}
+          />
+        </div>
       )}
 
       {activeConfigGroups.map((group) => (

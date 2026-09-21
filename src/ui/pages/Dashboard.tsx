@@ -52,6 +52,7 @@ function CustomerItemCard({
   formatDate: (iso: string | undefined) => string;
 }) {
   const navigate = useNavigate();
+  const { init } = useEditorStore();
   const [showTracking, setShowTracking] = useState(false);
   const trackingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -113,7 +114,17 @@ function CustomerItemCard({
     }
   }
 
-  const itemAddress = item.shipping_snapshot || order.shipping_snapshot;
+  const itemAddress =
+    (
+      item as OrderLineItem & {
+        shipping_snapshot?: {
+          customer_name?: string;
+          label?: string;
+          address?: string;
+          phone?: string;
+        };
+      }
+    ).shipping_snapshot || order.shipping_snapshot;
   const isDraft = item.status === 'draft';
   const isProcessing =
     item.status === 'processing' || item.status === 'shipped' || item.status === 'delivered';
@@ -121,18 +132,28 @@ function CustomerItemCard({
   const isDelivered = item.status === 'delivered';
   const progressWidth = isDelivered ? 'w-full' : isShipped ? 'w-1/2' : 'w-0';
 
-  // --- ITEM ROUTING NAVIGATION ---
+  // --- ITEM ROUTING NAVIGATION (BUG FIX 1: Proper Hydration) ---
   const handleProductClick = () => {
     if (item.type === 'marketplace') {
       navigate(`/marketplace?item=${item.product_id}`);
     } else if (item.type === 'custom') {
-      // Intelligently load the design into the editor workspace
-      const workspaceStr = localStorage.getItem('caliqui_workspace');
-      if (workspaceStr) {
+      const desItem = designs.find((d) => d.id === item.product_id);
+      if (desItem) {
         try {
-          const parsed = JSON.parse(workspaceStr);
-          parsed.activeDesignId = item.product_id;
-          localStorage.setItem('caliqui_workspace', JSON.stringify(parsed));
+          const existingStr = localStorage.getItem('caliqui_workspace');
+          const existing = existingStr ? JSON.parse(existingStr) : {};
+
+          // Explicitly overwrite decals and model info so the editor doesn't load the "last used" state
+          const workspace = {
+            ...existing,
+            activeDesignId: desItem.id,
+            decals: desItem.canvas_state || [],
+            tshirtColor: desItem.tshirt_color || '#ffffff',
+            apparelModel: (desItem as { apparel_model?: string }).apparel_model || 'tshirtman',
+          };
+
+          localStorage.setItem('caliqui_workspace', JSON.stringify(workspace));
+          init();
         } catch (e) {
           console.error(e);
         }
@@ -464,19 +485,42 @@ export function Dashboard() {
     if (longPressTimer.current) clearTimeout(longPressTimer.current);
   };
 
-  const handleEditDesign = (designId: string) => {
-    const workspaceStr = localStorage.getItem('caliqui_workspace');
-    if (workspaceStr) {
-      try {
-        const parsed = JSON.parse(workspaceStr);
-        parsed.activeDesignId = designId;
-        localStorage.setItem('caliqui_workspace', JSON.stringify(parsed));
-        init();
-      } catch (e) {
-        console.error(e);
-      }
+  // --- EXPLICIT HYDRATION FIX (Bug 1 & 2) ---
+  const handleEditDesign = (design: SavedDesign) => {
+    try {
+      const existingStr = localStorage.getItem('caliqui_workspace');
+      const existing = existingStr ? JSON.parse(existingStr) : {};
+
+      const workspace = {
+        ...existing,
+        activeDesignId: design.id,
+        decals: design.canvas_state || [],
+        tshirtColor: design.tshirt_color || '#ffffff',
+        apparelModel: (design as { apparel_model?: string }).apparel_model || 'tshirtman',
+      };
+
+      localStorage.setItem('caliqui_workspace', JSON.stringify(workspace));
+      init();
+    } catch (e) {
+      console.error(e);
     }
     navigate('/editor');
+  };
+
+  // --- EXPLICIT DB DELETION FIX (Bug 3) ---
+  const handleDeleteDesignDB = async (designId: string) => {
+    if (!window.confirm('Are you sure you want to permanently delete this design?')) return;
+
+    // Instantly remove from the UI
+    deleteDesign(designId);
+
+    try {
+      // Actually delete from the database
+      await supabase.from('saved_designs').delete().eq('id', designId);
+      fetchDashboardData(); // Re-sync to ensure clean state
+    } catch (err) {
+      console.error('Failed to delete design from database', err);
+    }
   };
 
   const handleOpenSizeModal = (design: SavedDesign) => {
@@ -924,7 +968,7 @@ export function Dashboard() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleEditDesign(design.id)}
+                            onClick={() => handleEditDesign(design)}
                             className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center hover:scale-110 transition-transform outline-none shadow-sm"
                             title="Edit Design"
                           >
@@ -932,7 +976,7 @@ export function Dashboard() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => deleteDesign(design.id)}
+                            onClick={() => handleDeleteDesignDB(design.id)}
                             className="w-8 h-8 rounded-full bg-white text-red-500 flex items-center justify-center hover:scale-110 transition-transform outline-none shadow-sm"
                             title="Delete"
                           >

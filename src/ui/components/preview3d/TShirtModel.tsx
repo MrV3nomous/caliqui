@@ -12,7 +12,6 @@ const MODELS: Record<string, string> = {
   tshirtwoman: tshirtWomanUrl,
 };
 
-// This permanently shrinks the raw geometry so decals spawn at the correct relative size
 const MODEL_SCALE = 0.03;
 
 export function TShirtModel() {
@@ -27,7 +26,6 @@ export function TShirtModel() {
     const clone = gltfScene.clone();
 
     clone.traverse((child) => {
-      // 1. Scale the position of every node to keep the hierarchy layout intact
       if (child.position) {
         child.position.multiplyScalar(MODEL_SCALE);
       }
@@ -42,7 +40,6 @@ export function TShirtModel() {
           child.material = child.material.clone();
         }
 
-        // 2. Permanently shrink the raw geometry (keeps local .scale at 1.0)
         if (child.geometry) {
           child.geometry = child.geometry.clone();
           child.geometry.scale(MODEL_SCALE, MODEL_SCALE, MODEL_SCALE);
@@ -77,11 +74,11 @@ export function TShirtModel() {
 
     if (primaryMesh.material instanceof THREE.MeshStandardMaterial) {
       primaryMesh.material.color.set(tshirtColor);
-      primaryMesh.material.roughness = 0.85; // Soft cotton scattering
-      primaryMesh.material.metalness = 0.0; // Fabric is not metallic
+      primaryMesh.material.roughness = 0.85;
+      primaryMesh.material.metalness = 0.0;
       primaryMesh.material.metalnessMap = null;
       primaryMesh.material.roughnessMap = null;
-      primaryMesh.material.envMapIntensity = 0.4; // Slightly boost environment light for better shadows
+      primaryMesh.material.envMapIntensity = 0.4;
       primaryMesh.material.needsUpdate = true;
     } else {
       const mat = primaryMesh.material as THREE.Material & {
@@ -171,7 +168,7 @@ export function TShirtModel() {
         meshName: primaryMesh.name,
         position: [localPos.x, localPos.y, localPos.z],
         rotation: [localEuler.x, localEuler.y, localEuler.z],
-        scale: 0.5, // Decal scale now works perfectly!
+        scale: 0.5,
       });
     });
   }, [decals, primaryMesh, camera, updateDecal]);
@@ -179,13 +176,17 @@ export function TShirtModel() {
   if (!primaryMesh) return <primitive object={copiedScene} />;
 
   return (
-    // Because geometry is permanently baked to 0.05, we can restore the normal 1.15 UI scale here
     <group name="workspace" scale={1.15}>
       <primitive
         object={copiedScene}
         onPointerDown={(e: ThreeEvent<PointerEvent>) => {
           const hitDecal = e.intersections.some((hit) => hit.object.userData?.isDecalHitbox);
-          if (hitDecal) return;
+          if (hitDecal) {
+            // Strictly guard OrbitControls by ensuring rogue clicks that brush the model
+            // while aiming for a decal don't mistakenly unlock the camera
+            e.stopPropagation();
+            return;
+          }
           const { autoSelect, selectedIds, setSelectedId, isDragging } = useEditorStore.getState();
           if (isDragging) return;
 

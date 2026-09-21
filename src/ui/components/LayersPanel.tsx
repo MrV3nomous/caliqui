@@ -4,6 +4,7 @@ import {
   Bookmark,
   Box,
   ChevronDown,
+  ChevronLeft,
   ChevronUp,
   Circle,
   Cloud,
@@ -54,7 +55,7 @@ export function LayersPanel() {
     setTshirtColor,
   } = useEditorStore();
 
-  const [expandedLayerId, setExpandedLayerId] = useState<string | null>(null);
+  const [activePropertiesId, setActivePropertiesId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
 
@@ -83,8 +84,6 @@ export function LayersPanel() {
     if (type === 'image') return <ImageIcon {...defaultProps} />;
     if (shapeType) {
       switch (shapeType) {
-        case 'rectangle':
-          return <Square {...defaultProps} />;
         case 'circle':
           return <Circle {...defaultProps} />;
         case 'triangle':
@@ -136,36 +135,58 @@ export function LayersPanel() {
     (id) => decals.find((d) => d.id === id)?.groupId !== undefined,
   );
 
+  if (activePropertiesId) {
+    const activeDecal = decals.find((d) => d.id === activePropertiesId);
+    return (
+      <div className="flex flex-col h-full bg-[#fbfbfd] overflow-hidden animate-in slide-in-from-right-4 duration-300">
+        <div className="h-14 flex items-center px-4 border-b border-black/5 shrink-0 gap-3 bg-white">
+          <IconButton onClick={() => setActivePropertiesId(null)} className="hover:bg-neutral-100">
+            <ChevronLeft size={18} strokeWidth={1.5} className="text-black" />
+          </IconButton>
+          <div className="flex flex-col">
+            <span className="font-bold text-[11px] uppercase tracking-[0.1em] text-black truncate max-w-[200px]">
+              {activeDecal?.name}
+            </span>
+            <span className="text-[9px] text-neutral-400 font-medium tracking-widest uppercase">
+              Properties
+            </span>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto px-6 hide-scrollbar">
+          <PropertiesPanel activeDecalId={activePropertiesId} />
+        </div>
+      </div>
+    );
+  }
+
   const renderLayerItem = (decal: DecalData, isNested = false) => {
     const isSelected = selectedIds.includes(decal.id);
-    const isExpanded = expandedLayerId === decal.id;
     const isEditing = editingId === decal.id;
 
     return (
       <div
         key={decal.id}
-        className={`flex flex-col overflow-hidden transition-all duration-300 ${isExpanded ? 'bg-[#f8f8f8] rounded-2xl border border-black/5 mb-3' : 'bg-transparent mb-1'}`}
+        className="flex flex-col overflow-hidden transition-all duration-300 bg-transparent mb-1"
       >
-        {/* biome-ignore lint/a11y/useKeyWithClickEvents: Custom UI */}
-        {/* biome-ignore lint/a11y/noStaticElementInteractions: Custom UI */}
+        {/* biome-ignore lint/a11y/useKeyWithClickEvents: Custom UI element */}
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: Custom UI element */}
         <div
-          className={`flex items-center justify-between p-2.5 rounded-2xl cursor-pointer transition-colors ${isNested && !isExpanded ? 'ml-6' : ''} ${isSelected && !isExpanded ? 'bg-black text-white shadow-md' : 'hover:bg-[#f5f5f7] text-black'}`}
+          className={`flex items-center justify-between p-2.5 rounded-2xl cursor-pointer transition-colors ${isNested ? 'ml-6' : ''} ${isSelected ? 'bg-black text-white shadow-md' : 'hover:bg-[#f5f5f7] text-black'}`}
           onClick={(e) => setSelectedId(decal.id, e.ctrlKey || e.metaKey || e.shiftKey)}
           onDoubleClick={() => {
             setEditingId(decal.id);
             setEditName(decal.name);
           }}
         >
-          {/* min-w-0 enforces text truncation instead of container expansion */}
           <div className="flex items-center gap-3 overflow-hidden flex-1 pl-1 min-w-0">
             <div
-              className={`p-1.5 rounded-lg shrink-0 ${isSelected && !isExpanded ? 'text-white' : 'text-neutral-500'}`}
+              className={`p-1.5 rounded-lg shrink-0 ${isSelected ? 'text-white' : 'text-neutral-500'}`}
             >
               {renderIcon(decal.type, decal.shapeType)}
             </div>
             {isEditing ? (
               <input
-                // biome-ignore lint/a11y/noAutofocus: Intentional UI behavior
+                // biome-ignore lint/a11y/noAutofocus: Intentional UX behavior for inline editing
                 autoFocus
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
@@ -178,7 +199,7 @@ export function LayersPanel() {
               />
             ) : (
               <span
-                className={`text-[11px] font-medium tracking-wide truncate min-w-0 flex-1 ${isSelected && !isExpanded ? 'text-white' : 'text-neutral-700'}`}
+                className={`text-[11px] font-medium tracking-wide truncate min-w-0 flex-1 ${isSelected ? 'text-white' : 'text-neutral-700'}`}
               >
                 {decal.name}
               </span>
@@ -189,22 +210,22 @@ export function LayersPanel() {
             <div className="flex items-center gap-1 shrink-0 pr-1">
               <IconButton
                 size="sm"
-                className={`transition-colors outline-none shrink-0 ${isExpanded ? 'bg-black/5 text-black' : isSelected ? 'text-white/80 hover:text-white' : 'text-neutral-400 hover:text-black'}`}
+                className={`transition-colors outline-none shrink-0 ${isSelected ? 'text-white/80 hover:text-white' : 'text-neutral-400 hover:text-black'}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   if (!selectedIds.includes(decal.id)) setSelectedId(decal.id, false);
-                  setExpandedLayerId(isExpanded ? null : decal.id);
+                  setActivePropertiesId(decal.id);
                 }}
               >
                 <Settings2 size={14} strokeWidth={1.5} />
               </IconButton>
               <div
-                className={`w-px h-4 mx-1 shrink-0 ${isSelected && !isExpanded ? 'bg-white/30' : 'bg-black/10'}`}
+                className={`w-px h-4 mx-1 shrink-0 ${isSelected ? 'bg-white/30' : 'bg-black/10'}`}
               />
               <div className="flex flex-col gap-0.5 shrink-0">
                 <button
                   type="button"
-                  className={`p-0.5 rounded outline-none transition-colors ${isSelected && !isExpanded ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-400 hover:text-black hover:bg-black/5'}`}
+                  className={`p-0.5 rounded outline-none transition-colors ${isSelected ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-400 hover:text-black hover:bg-black/5'}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     moveLayerUp(decal.id);
@@ -214,7 +235,7 @@ export function LayersPanel() {
                 </button>
                 <button
                   type="button"
-                  className={`p-0.5 rounded outline-none transition-colors ${isSelected && !isExpanded ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-400 hover:text-black hover:bg-black/5'}`}
+                  className={`p-0.5 rounded outline-none transition-colors ${isSelected ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-neutral-400 hover:text-black hover:bg-black/5'}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     moveLayerDown(decal.id);
@@ -235,7 +256,7 @@ export function LayersPanel() {
                   size={14}
                   strokeWidth={1.5}
                   className={
-                    isSelected && !isExpanded
+                    isSelected
                       ? 'text-white hover:text-red-300'
                       : 'text-neutral-400 hover:text-red-500'
                   }
@@ -244,12 +265,6 @@ export function LayersPanel() {
             </div>
           )}
         </div>
-
-        {isExpanded && (
-          <div className="p-4 pt-2 border-t border-black/5 animate-in slide-in-from-top-2 duration-200">
-            <PropertiesPanel activeDecalId={decal.id} />
-          </div>
-        )}
       </div>
     );
   };
@@ -271,7 +286,6 @@ export function LayersPanel() {
           />
         </div>
 
-        {/* Minimal iOS-style Toggle */}
         <div className="flex items-center justify-between px-1 shrink-0">
           <span className="text-[10px] text-neutral-500 font-medium uppercase tracking-[0.2em] truncate pr-2">
             Auto-Select Layer

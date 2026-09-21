@@ -8,12 +8,15 @@ import {
   EyeOff,
   Image as ImageIcon,
   Layers,
+  LifeBuoy,
   Loader2,
+  MessageSquare,
   Package,
   Pencil,
   Percent,
   Plus,
   Search,
+  Send,
   Tags,
   Trash2,
   X,
@@ -50,22 +53,38 @@ export function AdminDashboard() {
   const navigate = useNavigate();
   const { init } = useEditorStore();
   const {
-    isAdmin,
+    adminRole,
     orders,
     adminDesigns,
+    tickets,
     isLoading,
     verifyAdminAccess,
     fetchAdminData,
     fetchAdminDesigns,
+    fetchTickets,
+    replyToTicket,
+    resolveTicket,
     updateOrderItemStatus,
     uploadMarketplaceAsset,
     createMarketplaceItem,
   } = useAdminStore();
 
-  const [activeTab, setActiveTab] = useState<'orders' | 'inventory' | 'catalog'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders' | 'inventory' | 'catalog' | 'support'>(
+    'orders',
+  );
   const [orderFilter, setOrderFilter] = useState<'all' | 'processing' | 'shipped' | 'delivered'>(
     'all',
   );
+
+  // RBAC Role Checking Engine
+  const isSuper = adminRole === 'super_admin';
+  const canFulfill = isSuper || adminRole === 'fulfillment_manager';
+  const canCatalog = isSuper || adminRole === 'catalog_manager';
+  const canSupport = isSuper || adminRole === 'support_agent';
+
+  // Support Desk State
+  const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState('');
 
   // Accordion & Item Dispatch State
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
@@ -128,15 +147,27 @@ export function AdminDashboard() {
     const checkAccess = async () => {
       const isAllowed = await verifyAdminAccess();
       if (isAllowed) {
-        fetchAdminData();
-        fetchAdminDesigns();
-        loadCatalog();
+        // Intelligently fetch only what this user's role is allowed to see
+        const role = useAdminStore.getState().adminRole;
+        if (role === 'super_admin' || role === 'fulfillment_manager') fetchAdminData();
+        if (role === 'super_admin' || role === 'catalog_manager') {
+          fetchAdminDesigns();
+          loadCatalog();
+        }
+        if (role === 'super_admin' || role === 'support_agent') {
+          fetchTickets();
+          fetchAdminData(); // Fetched so support agents have order context
+        }
+
+        // Auto-route them to their primary allowed tab if they don't have Orders access
+        if (role === 'catalog_manager') setActiveTab('inventory');
+        if (role === 'support_agent') setActiveTab('support');
       } else if (isAllowed === false) {
         navigate('/');
       }
     };
     checkAccess();
-  }, [verifyAdminAccess, fetchAdminData, fetchAdminDesigns, loadCatalog, navigate]);
+  }, [verifyAdminAccess, fetchAdminData, fetchAdminDesigns, loadCatalog, fetchTickets, navigate]);
 
   const toggleOrderAccordion = (id: string) => {
     setExpandedOrders((prev) => {
@@ -158,7 +189,6 @@ export function AdminDashboard() {
     setTracking('');
   };
 
-  // --- ITEM ROUTING NAVIGATION ---
   const handleProductClick = (item: OrderLineItem) => {
     if (item.type === 'marketplace') {
       navigate(`/marketplace?item=${item.product_id}`);
@@ -178,7 +208,6 @@ export function AdminDashboard() {
     }
   };
 
-  // --- ON-THE-FLY PRINT FILE GENERATION ---
   const handleDownloadPrintFile = async (
     item: OrderLineItem,
     canvasState: Record<string, unknown>[] | null,
@@ -317,6 +346,13 @@ export function AdminDashboard() {
     }
   };
 
+  const handleReplyToTicket = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedTicketId || !replyText.trim()) return;
+    await replyToTicket(selectedTicketId, replyText);
+    setReplyText('');
+  };
+
   const filteredOrders = orders.filter((o) => {
     if (orderFilter === 'all') return true;
     if (o.status === orderFilter) return true;
@@ -337,13 +373,11 @@ export function AdminDashboard() {
     });
   };
 
-  // Derive active collections dynamically from catalog
   const dynamicCategories = useMemo(() => {
     const categories = new Set(catalogItems.map((i) => i.collection || 'Core'));
     return ['All', ...Array.from(categories)];
   }, [catalogItems]);
 
-  // Deep Search & Filter Logic for Catalog
   const filteredCatalogItems = catalogItems.filter((item) => {
     const queryWords = catalogSearchQuery.toLowerCase().split(' ').filter(Boolean);
     const searchableText =
@@ -356,13 +390,39 @@ export function AdminDashboard() {
     return matchesSearch && matchesCategory;
   });
 
-  if (isLoading || isAdmin === null) {
+  const selectedTicket = tickets.find((t) => t.id === selectedTicketId);
+
+  if (isLoading || adminRole === null) {
     return <PremiumLoader fullScreen={true} />;
   }
 
-  if (!isAdmin) return null;
+  // Generate Available Tabs dynamically based on RBAC matrix
+  const availableTabs = [];
+  if (canFulfill)
+    availableTabs.push({
+      id: 'orders',
+      label: 'Fulfillment Pipeline',
+      icon: <Package size={14} strokeWidth={1.5} />,
+    });
+  if (canCatalog) {
+    availableTabs.push({
+      id: 'inventory',
+      label: 'Publish Item',
+      icon: <Plus size={14} strokeWidth={1.5} />,
+    });
+    availableTabs.push({
+      id: 'catalog',
+      label: 'Manage Catalog',
+      icon: <Box size={14} strokeWidth={1.5} />,
+    });
+  }
+  if (canSupport)
+    availableTabs.push({
+      id: 'support',
+      label: 'Support Desk',
+      icon: <LifeBuoy size={14} strokeWidth={1.5} />,
+    });
 
-  // Reusable Apple-style Toggle Switch
   const Switch = ({
     checked,
     onChange,
@@ -543,6 +603,9 @@ export function AdminDashboard() {
           <span className="text-[10px] sm:text-[11px] font-medium uppercase tracking-[0.2em] text-red-500">
             Admin Console
           </span>
+          <span className="hidden md:inline-block px-2 py-0.5 bg-red-50 text-red-600 rounded-md text-[8px] font-bold uppercase tracking-widest border border-red-100">
+            {adminRole?.replace('_', ' ')}
+          </span>
         </div>
 
         <Link
@@ -554,55 +617,49 @@ export function AdminDashboard() {
       </header>
 
       <main className="flex-1 max-w-[1600px] w-full mx-auto px-6 sm:px-12 py-10 pb-32">
-        {/* KPI DASHBOARD */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-12">
-          <div className="bg-[#fbfbfd] border border-black/[0.04] rounded-[2rem] p-6 shadow-sm hover:border-black/10 transition-colors">
-            <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-neutral-400 mb-3">
-              Total Revenue
-            </p>
-            <p className="text-3xl font-light text-black tracking-tight">
-              ₹{totalRevenue.toLocaleString('en-IN')}
-            </p>
+        {/* KPI DASHBOARD (Strictly Super Admin Only) */}
+        {isSuper && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-12 animate-in fade-in slide-in-from-top-4">
+            <div className="bg-[#fbfbfd] border border-black/[0.04] rounded-[2rem] p-6 shadow-sm hover:border-black/10 transition-colors">
+              <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-neutral-400 mb-3">
+                Total Revenue
+              </p>
+              <p className="text-3xl font-light text-black tracking-tight">
+                ₹{totalRevenue.toLocaleString('en-IN')}
+              </p>
+            </div>
+            <div className="bg-[#fbfbfd] border border-black/[0.04] rounded-[2rem] p-6 shadow-sm hover:border-black/10 transition-colors">
+              <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-neutral-400 mb-3">
+                Total Orders
+              </p>
+              <p className="text-3xl font-light text-black tracking-tight">{orders.length}</p>
+            </div>
+            <div className="bg-[#fff9f0] border border-amber-500/10 rounded-[2rem] p-6 shadow-sm hover:border-amber-500/30 transition-colors">
+              <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-amber-500 mb-3">
+                Pending
+              </p>
+              <p className="text-3xl font-light text-amber-600 tracking-tight">
+                {orders.filter((o) => o.status === 'processing').length}
+              </p>
+            </div>
+            <div className="bg-[#f0fdf4] border border-green-500/10 rounded-[2rem] p-6 shadow-sm hover:border-green-500/30 transition-colors">
+              <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-green-500 mb-3">
+                Delivered
+              </p>
+              <p className="text-3xl font-light text-green-600 tracking-tight">
+                {orders.filter((o) => o.status === 'delivered').length}
+              </p>
+            </div>
           </div>
-          <div className="bg-[#fbfbfd] border border-black/[0.04] rounded-[2rem] p-6 shadow-sm hover:border-black/10 transition-colors">
-            <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-neutral-400 mb-3">
-              Total Orders
-            </p>
-            <p className="text-3xl font-light text-black tracking-tight">{orders.length}</p>
-          </div>
-          <div className="bg-[#fff9f0] border border-amber-500/10 rounded-[2rem] p-6 shadow-sm hover:border-amber-500/30 transition-colors">
-            <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-amber-500 mb-3">
-              Pending
-            </p>
-            <p className="text-3xl font-light text-amber-600 tracking-tight">
-              {orders.filter((o) => o.status === 'processing').length}
-            </p>
-          </div>
-          <div className="bg-[#f0fdf4] border border-green-500/10 rounded-[2rem] p-6 shadow-sm hover:border-green-500/30 transition-colors">
-            <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-green-500 mb-3">
-              Delivered
-            </p>
-            <p className="text-3xl font-light text-green-600 tracking-tight">
-              {orders.filter((o) => o.status === 'delivered').length}
-            </p>
-          </div>
-        </div>
+        )}
 
-        {/* ADMIN TABS */}
+        {/* ADMIN TABS (Role-Filtered) */}
         <div className="flex items-center gap-6 border-b border-black/[0.04] mb-10 overflow-x-auto hide-scrollbar">
-          {[
-            {
-              id: 'orders',
-              label: 'Fulfillment Pipeline',
-              icon: <Package size={14} strokeWidth={1.5} />,
-            },
-            { id: 'inventory', label: 'Publish Item', icon: <Plus size={14} strokeWidth={1.5} /> },
-            { id: 'catalog', label: 'Manage Catalog', icon: <Box size={14} strokeWidth={1.5} /> },
-          ].map((tab) => (
+          {availableTabs.map((tab) => (
             <button
               key={tab.id}
               type="button"
-              onClick={() => setActiveTab(tab.id as 'orders' | 'inventory' | 'catalog')}
+              onClick={() => setActiveTab(tab.id as 'orders' | 'inventory' | 'catalog' | 'support')}
               className={`flex items-center gap-2 pb-4 text-[10px] font-medium uppercase tracking-[0.15em] transition-all whitespace-nowrap outline-none border-b-2 shrink-0 ${
                 activeTab === tab.id
                   ? 'text-black border-black'
@@ -615,7 +672,7 @@ export function AdminDashboard() {
         </div>
 
         {/* TAB 1: ORDERS */}
-        {activeTab === 'orders' && (
+        {activeTab === 'orders' && canFulfill && (
           <div className="space-y-6 animate-in fade-in duration-500">
             <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-2">
               {['all', 'processing', 'shipped', 'delivered'].map((f) => (
@@ -866,9 +923,7 @@ export function AdminDashboard() {
                                     Deliver To
                                   </p>
                                   <p className="text-sm font-medium text-black mb-1">
-                                    {itemAddress?.customer_name ||
-                                      itemAddress?.label ||
-                                      order.customer_name}
+                                    {itemAddress?.label || order.customer_name}
                                   </p>
                                   <p className="text-xs font-light text-neutral-500 leading-relaxed">
                                     {itemAddress?.address}
@@ -1029,7 +1084,7 @@ export function AdminDashboard() {
         )}
 
         {/* TAB 2: PUBLISH CMS */}
-        {activeTab === 'inventory' && (
+        {activeTab === 'inventory' && canCatalog && (
           <div className="animate-in fade-in duration-500">
             {!isCMSOpen ? (
               <div className="bg-[#fbfbfd] border border-black/[0.04] rounded-[3rem] p-12 md:p-20 text-center shadow-sm flex flex-col items-center">
@@ -1253,7 +1308,7 @@ export function AdminDashboard() {
         )}
 
         {/* TAB 3: MANAGE CATALOG */}
-        {activeTab === 'catalog' && (
+        {activeTab === 'catalog' && canCatalog && (
           <div className="animate-in fade-in duration-500">
             {/* CATALOG SEARCH & FILTER HEADER */}
             <div className="mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1404,6 +1459,166 @@ export function AdminDashboard() {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* TAB 4: SUPPORT DESK */}
+        {activeTab === 'support' && canSupport && (
+          <div className="animate-in fade-in duration-500">
+            <div className="flex flex-col lg:flex-row h-[700px] border border-black/5 rounded-[2rem] overflow-hidden bg-white shadow-sm">
+              {/* Left Column: Inbox List */}
+              <div className="w-full lg:w-1/3 border-b lg:border-b-0 lg:border-r border-black/5 bg-[#fbfbfd] flex flex-col h-[300px] lg:h-full">
+                <div className="p-5 border-b border-black/5 flex items-center justify-between bg-white shrink-0">
+                  <h3 className="text-sm font-semibold text-black tracking-tight flex items-center gap-2">
+                    <MessageSquare size={16} className="text-blue-500" /> Support Inbox
+                  </h3>
+                  <span className="text-[10px] font-bold uppercase tracking-widest bg-black text-white px-2 py-0.5 rounded-full">
+                    {tickets.filter((t) => t.status === 'open').length} Open
+                  </span>
+                </div>
+
+                <div className="overflow-y-auto flex-1 hide-scrollbar">
+                  {tickets.length === 0 ? (
+                    <div className="p-8 text-center text-neutral-400 text-xs font-medium uppercase tracking-widest mt-10">
+                      Inbox is completely empty.
+                    </div>
+                  ) : (
+                    tickets.map((ticket) => (
+                      <button
+                        key={ticket.id}
+                        type="button"
+                        onClick={() => setSelectedTicketId(ticket.id)}
+                        className={`w-full text-left p-5 border-b border-black/[0.03] transition-colors outline-none cursor-pointer ${
+                          selectedTicketId === ticket.id
+                            ? 'bg-blue-50/50 border-l-4 border-l-blue-500'
+                            : 'hover:bg-white border-l-4 border-l-transparent'
+                        }`}
+                      >
+                        <div className="flex justify-between items-start mb-1.5">
+                          <span
+                            className={`text-[10px] font-bold uppercase tracking-[0.2em] ${
+                              ticket.status === 'open'
+                                ? 'text-red-500'
+                                : ticket.status === 'in_progress'
+                                  ? 'text-amber-500'
+                                  : 'text-green-500'
+                            }`}
+                          >
+                            {ticket.status.replace('_', ' ')}
+                          </span>
+                          <span className="text-[9px] text-neutral-400 uppercase tracking-widest font-mono">
+                            {formatDate(ticket.updated_at).split(',')[0]}
+                          </span>
+                        </div>
+                        <h4 className="text-sm font-medium text-black truncate mb-1 pr-4">
+                          {ticket.subject}
+                        </h4>
+                        <p className="text-xs text-neutral-500 truncate">
+                          {ticket.category}
+                          {ticket.order_id && (
+                            <span className="ml-2 px-1.5 py-0.5 bg-black/5 rounded-md font-mono text-[9px] text-black">
+                              #{ticket.order_id.split('-')[0]}
+                            </span>
+                          )}
+                        </p>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Right Column: Active Thread & Context */}
+              <div className="w-full lg:w-2/3 flex flex-col bg-white h-[400px] lg:h-full">
+                {selectedTicket ? (
+                  <>
+                    {/* Thread Header */}
+                    <div className="p-5 border-b border-black/5 flex items-center justify-between shrink-0 bg-white">
+                      <div>
+                        <h3 className="font-medium text-black text-lg tracking-tight mb-1">
+                          {selectedTicket.subject}
+                        </h3>
+                        <p className="text-[10px] font-mono text-neutral-400 uppercase tracking-widest">
+                          Ticket ID: {selectedTicket.id.split('-')[0]}
+                        </p>
+                      </div>
+                      {selectedTicket.status !== 'resolved' && (
+                        <button
+                          type="button"
+                          onClick={() => resolveTicket(selectedTicket.id)}
+                          className="flex items-center gap-2 h-9 px-4 rounded-full bg-green-50 text-green-600 hover:bg-green-100 transition-colors text-[10px] uppercase tracking-[0.15em] font-bold outline-none"
+                        >
+                          <CheckCircle2 size={14} strokeWidth={2} /> Resolve Issue
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Order Context Bar (If Linked) */}
+                    {selectedTicket.order_id && (
+                      <div className="bg-[#fbfbfd] px-5 py-3 border-b border-black/5 flex items-center gap-3 shrink-0">
+                        <Package size={14} className="text-neutral-400" />
+                        <span className="text-[10px] text-neutral-500 uppercase tracking-widest font-medium">
+                          Regarding Order:{' '}
+                          <strong className="text-black font-mono ml-1">
+                            #{selectedTicket.order_id.split('-')[0]}
+                          </strong>
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Chat History */}
+                    <div className="flex-1 overflow-y-auto p-5 sm:p-8 space-y-4 bg-white hide-scrollbar">
+                      {selectedTicket.messages?.map((msg) => (
+                        <div
+                          key={msg.id}
+                          className={`flex flex-col w-full max-w-[85%] ${msg.is_admin_reply ? 'ml-auto items-end' : 'mr-auto items-start'}`}
+                        >
+                          <div
+                            className={`p-4 rounded-[1.25rem] text-sm leading-relaxed ${
+                              msg.is_admin_reply
+                                ? 'bg-black text-white rounded-tr-sm shadow-sm'
+                                : 'bg-[#fbfbfd] border border-black/[0.04] text-black rounded-tl-sm shadow-sm'
+                            }`}
+                          >
+                            {msg.message}
+                          </div>
+                          <span className="text-[9px] text-neutral-400 font-medium uppercase tracking-[0.15em] mt-2 px-1">
+                            {formatDate(msg.created_at)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Reply Input */}
+                    <div className="p-4 sm:p-5 bg-white border-t border-black/5 shrink-0">
+                      <form onSubmit={handleReplyToTicket} className="relative flex items-center">
+                        <input
+                          type="text"
+                          value={replyText}
+                          onChange={(e) => setReplyText(e.target.value)}
+                          placeholder="Type your official reply..."
+                          disabled={selectedTicket.status === 'resolved'}
+                          className="w-full h-12 pl-5 pr-14 bg-[#fbfbfd] border border-black/5 rounded-full text-sm outline-none focus:border-black/20 focus:bg-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                        />
+                        <button
+                          type="submit"
+                          disabled={selectedTicket.status === 'resolved' || !replyText.trim()}
+                          className="absolute right-1.5 w-9 h-9 flex items-center justify-center bg-black text-white rounded-full hover:scale-105 transition-transform disabled:opacity-50 disabled:scale-100 outline-none shadow-sm"
+                        >
+                          <Send size={14} strokeWidth={2} className="ml-0.5" />
+                        </button>
+                      </form>
+                    </div>
+                  </>
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center text-neutral-300">
+                    <MessageSquare size={48} strokeWidth={1} className="mb-4" />
+                    <p className="text-[11px] uppercase tracking-[0.2em] font-medium">
+                      Select a ticket to begin
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </main>

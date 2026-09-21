@@ -202,7 +202,15 @@ export function PropertiesPanel({ activeDecalId }: { activeDecalId: string }) {
   const updateVisuals = async (updates: Partial<DecalData>) => {
     updateDecal(activeDecalId, updates);
 
-    const nonRedrawProps = ['position', 'rotation', 'scale', 'scaleX', 'scaleY', 'rotationOffset'];
+    const nonRedrawProps = [
+      'position',
+      'rotation',
+      'scale',
+      'scaleX',
+      'scaleY',
+      'rotationOffset',
+      'zDepth',
+    ];
     const needsRedraw = Object.keys(updates).some((key) => !nonRedrawProps.includes(key));
     if (!needsRedraw) return;
 
@@ -344,7 +352,7 @@ export function PropertiesPanel({ activeDecalId }: { activeDecalId: string }) {
         </button>
       )}
 
-      {/* Explicitly Add Font Size Controller for Text Decals */}
+      {/* Font Size Controller */}
       {activeDecal.type === 'text' && (
         <div className="space-y-4 min-w-0">
           <div className="flex items-center justify-between pr-1 border-b border-black/[0.02] pb-2">
@@ -371,6 +379,39 @@ export function PropertiesPanel({ activeDecalId }: { activeDecalId: string }) {
           />
         </div>
       )}
+
+      {/* Z-Depth Restricted Controller */}
+      <div className="space-y-4 min-w-0">
+        <div className="flex items-center justify-between pr-1 border-b border-black/[0.02] pb-2">
+          <h4 className="text-[10px] font-medium text-neutral-500 uppercase tracking-[0.25em] pl-1">
+            3D Projection
+          </h4>
+          <button
+            type="button"
+            onClick={() => {
+              saveHistory();
+              updateVisuals({ zDepth: defaults.zDepth ?? 0.04 });
+            }}
+            className="text-neutral-400 hover:text-black transition-colors outline-none"
+            title="Reset Z-Depth"
+          >
+            <RotateCcw size={12} strokeWidth={1.5} />
+          </button>
+        </div>
+        <SliderControl
+          prop={{
+            id: 'zDepth',
+            label: 'Z-Depth (Bleed Control)',
+            type: 'slider',
+            min: 0.01,
+            max: 0.1,
+            step: 0.01,
+          }}
+          activeDecal={activeDecal}
+          updateVisuals={updateVisuals}
+          saveHistory={saveHistory}
+        />
+      </div>
 
       {activeConfigGroups.map((group) => (
         <div key={group.id} className="space-y-4 min-w-0">

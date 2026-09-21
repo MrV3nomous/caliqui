@@ -25,10 +25,6 @@ import { useCheckoutStore } from '@/ui/store/checkout-store';
 import type { MarketplaceItem } from '@/ui/store/marketplace-store';
 import { useMarketplaceStore } from '@/ui/store/marketplace-store';
 
-// Global Queue Manager to prevent WebGL Context crashes
-let activeWebglCaptures = 0;
-const MAX_CONCURRENT_WEBGL = 2;
-
 // Helper to calculate the final discounted price safely
 const getFinalPrice = (price: number, discount?: number) => {
   if (!discount || discount <= 0) return price;
@@ -60,107 +56,29 @@ const getSortedGallery = (item: MarketplaceItem): string[] => {
   });
 };
 
-// --- THE HOVER-TO-HYDRATE 3D ENGINE ---
-function HoverHydrate3D({ product, onOpen }: { product: MarketplaceItem; onOpen: () => void }) {
-  const [snapshot, setSnapshot] = useState<string | null>(null);
-  const [isHovered, setIsHovered] = useState(false);
-  const [isCapturing, setIsCapturing] = useState(false);
+// --- DIRECT LIVE 3D RENDERER (Optimized via Spatial Intersection) ---
+function Smart3DViewer({ product, onOpen }: { product: MarketplaceItem; onOpen: () => void }) {
   const [isInView, setIsInView] = useState(false);
-  const [isReady, setIsReady] = useState(false);
-
-  const containerRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<HTMLDivElement>(null);
   const [pointerDownTime, setPointerDownTime] = useState(0);
 
-  // 1. Intersection Observer to detect when the card enters the screen
+  // Mount/Unmount WebGL context based on viewport proximity to save massive amounts of memory
   useEffect(() => {
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) {
-          setIsInView(true);
-        }
+        setIsInView(entry.isIntersecting);
       },
-      { threshold: 0.1, rootMargin: '200px' },
+      { threshold: 0, rootMargin: '500px' }, // Pre-load slightly before it enters screen
     );
 
     if (observerRef.current) observer.observe(observerRef.current);
     return () => observer.disconnect();
   }, []);
 
-  // 2. Queue Manager to prevent WebGL Context Limits
-  useEffect(() => {
-    let mounted = true;
-    let checkInterval: ReturnType<typeof setInterval>;
-
-    if (isInView && !snapshot && !isCapturing) {
-      checkInterval = setInterval(() => {
-        if (activeWebglCaptures < MAX_CONCURRENT_WEBGL) {
-          activeWebglCaptures++;
-          if (mounted) setIsCapturing(true);
-          clearInterval(checkInterval);
-        }
-      }, 200);
-    }
-
-    return () => {
-      mounted = false;
-      if (checkInterval) clearInterval(checkInterval);
-    };
-  }, [isInView, snapshot, isCapturing]);
-
-  // 3. Capture Snapshot & Kill Engine
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
-    if (isCapturing) {
-      timer = setTimeout(() => {
-        if (containerRef.current) {
-          const canvas = containerRef.current.querySelector('canvas');
-          if (canvas) {
-            try {
-              const dataUrl = canvas.toDataURL('image/png', 1.0);
-              if (dataUrl.length > 20000) {
-                setSnapshot(dataUrl);
-                activeWebglCaptures--;
-                setIsCapturing(false);
-                return;
-              }
-            } catch (e) {
-              console.error('Failed to capture WebGL snapshot', e);
-            }
-          }
-        }
-        activeWebglCaptures--;
-        setIsCapturing(false);
-      }, 2500);
-    }
-
-    return () => {
-      if (timer) {
-        clearTimeout(timer);
-        if (isCapturing) activeWebglCaptures--;
-      }
-    };
-  }, [isCapturing]);
-
-  // 4. Seamless Wake-up Timer
-  useEffect(() => {
-    if (isHovered) {
-      const t = setTimeout(() => setIsReady(true), 400);
-      return () => clearTimeout(t);
-    } else {
-      setIsReady(false);
-    }
-  }, [isHovered]);
-
-  const shouldRender3D = isCapturing || isHovered;
-
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: Smart click handler for 3D interaction
     <div
       ref={observerRef}
-      className="absolute inset-0 w-full h-full touch-none bg-transparent overflow-hidden rounded-2xl"
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      className="absolute inset-0 w-full h-full touch-none bg-[#f8f8f8] overflow-hidden rounded-2xl cursor-pointer isolate"
       onPointerDown={() => setPointerDownTime(Date.now())}
       onPointerUp={() => {
         // Smart Click: < 250ms = opens drawer. > 250ms = dragging 3D model.
@@ -169,39 +87,15 @@ function HoverHydrate3D({ product, onOpen }: { product: MarketplaceItem; onOpen:
         }
       }}
     >
-      {/* Loading Shimmer */}
-      {!snapshot && (
-        <div className="absolute inset-0 w-full h-full flex flex-col items-center justify-center bg-[#f8f8f8] animate-pulse z-0">
+      {!isInView ? (
+        <div className="absolute inset-0 flex items-center justify-center">
           <Loader2 size={24} strokeWidth={1.5} className="animate-spin text-neutral-300" />
         </div>
-      )}
-
-      {/* Static Snapshot */}
-      {snapshot && (
-        <img
-          src={snapshot}
-          alt={product.name}
-          loading="lazy"
-          draggable={false}
-          className={`absolute inset-0 w-full h-full object-cover mix-blend-multiply transition-opacity duration-500 z-10 pointer-events-none ${
-            isHovered && isReady ? 'opacity-0' : 'opacity-100'
-          }`}
-        />
-      )}
-
-      {/* Live WebGL Canvas */}
-      {shouldRender3D && (
-        <div
-          ref={containerRef}
-          className={`absolute inset-0 w-full h-full transition-opacity duration-300 z-20 ${
-            isCapturing && !isHovered ? 'pointer-events-none' : 'cursor-grab active:cursor-grabbing'
-          }`}
-          style={{ opacity: isCapturing && !isHovered ? 0.01 : 1 }}
-        >
+      ) : (
+        <div className="absolute inset-0 w-full h-full z-20 cursor-grab active:cursor-grabbing animate-in fade-in duration-700">
           <Mini3DViewer
             canvasState={product.canvas_state}
             tshirtColor={product.tshirt_color || '#ffffff'}
-            fallbackImage={product.thumbnail_url}
             apparelModel={product.apparel_model || 'tshirtman'}
           />
         </div>
@@ -297,14 +191,19 @@ function ProductGridCarousel({
       {urls.length > 1 && (
         <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-1.5 z-20">
           {urls.map((url, i) => (
-            // biome-ignore lint/a11y/noStaticElementInteractions: Visual hover indicator
-            <div
+            <button
               key={url}
+              type="button"
+              aria-label={`View image ${i + 1}`}
               onMouseEnter={(e) => {
                 e.stopPropagation();
                 setCurrentIndex(i);
               }}
-              className={`w-1.5 h-1.5 rounded-full transition-colors ${
+              onClick={(e) => {
+                e.stopPropagation();
+                setCurrentIndex(i);
+              }}
+              className={`w-1.5 h-1.5 rounded-full transition-colors p-0 m-0 outline-none border-none ${
                 i === currentIndex ? 'bg-black' : 'bg-black/20'
               }`}
             />
@@ -456,7 +355,7 @@ function ProductDrawerCarousel({
                   e.stopPropagation();
                   setCurrentIndex(i);
                 }}
-                className={`h-2 rounded-full transition-all outline-none ${
+                className={`h-2 rounded-full transition-all outline-none p-0 m-0 border-none ${
                   i === currentIndex ? 'bg-black w-4' : 'bg-black/20 w-2 hover:bg-black/40'
                 }`}
               />
@@ -501,7 +400,7 @@ function ProductCard({
         </div>
 
         {product.canvas_state ? (
-          <HoverHydrate3D product={product} onOpen={() => onOpen(product)} />
+          <Smart3DViewer product={product} onOpen={() => onOpen(product)} />
         ) : (
           <ProductGridCarousel
             urls={sortedUrls}
@@ -545,7 +444,6 @@ export function Marketplace() {
   const { isAuthenticated, openAuthModal } = useAuthStore();
   const { cart, addToCart } = useCheckoutStore();
 
-  // Extracting all the new Growth UI Features
   const {
     items,
     spotlightItems,
@@ -587,24 +485,19 @@ export function Marketplace() {
   const [cartAnim, setCartAnim] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
 
-  // Used for Skeleton Loaders
   const skeletonKeys = useMemo(() => Array.from({ length: 12 }).map(() => crypto.randomUUID()), []);
 
-  // Synchronization locks
   const isNavigating = useRef(false);
   const observerTarget = useRef<HTMLDivElement>(null);
 
-  // Touch & Hold Logic for Mobile Size Removal
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isLongPress = useRef(false);
 
-  // 1. Initial Data Fetch (Collections & Spotlight)
   useEffect(() => {
     fetchCollections();
     fetchSpotlightItems();
   }, [fetchCollections, fetchSpotlightItems]);
 
-  // 2. Debounce Search Queries
   useEffect(() => {
     const handler = setTimeout(() => {
       setDebouncedSearch(searchQuery);
@@ -612,14 +505,12 @@ export function Marketplace() {
     return () => clearTimeout(handler);
   }, [searchQuery]);
 
-  // 3. Fetch Items Pipeline (Triggers on Category, Search, or Sort change)
   useEffect(() => {
     if (sortBy) {
       fetchItems(activeCategory, debouncedSearch, 1);
     }
   }, [activeCategory, debouncedSearch, sortBy, fetchItems]);
 
-  // 4. Infinite Scrolling Observer
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
@@ -677,7 +568,6 @@ export function Marketplace() {
     }));
   };
 
-  // --- Interaction Handlers ---
   const handleSizeLeftClick = (e: React.MouseEvent, size: string) => {
     e.preventDefault();
     if (isLongPress.current) {
@@ -712,7 +602,7 @@ export function Marketplace() {
   const handleOpenProduct = (product: MarketplaceItem) => {
     incrementPopularity(product.id);
     isNavigating.current = true;
-    setSearchParams({ item: product.id }, { replace: true });
+    setSearchParams({ item: product.id });
     setSelectedProduct(product);
     setSelectedSizes({ XS: 0, S: 0, M: 1, L: 0, XL: 0, XXL: 0 });
     setFocusedSize('M');
@@ -825,7 +715,7 @@ export function Marketplace() {
         </div>
       )}
 
-      {/* LUXURY PRODUCT DRAWER */}
+      {/* LUXURY PRODUCT DRAWER (Clean Mobile Scrolling Layout) */}
       {selectedProduct && (
         <div className="fixed inset-0 z-[500] flex justify-end">
           <button
@@ -835,23 +725,24 @@ export function Marketplace() {
             onClick={handleCloseProduct}
           />
 
+          {/* Mobile Close Button */}
+          <button
+            type="button"
+            onClick={handleCloseProduct}
+            className="md:hidden fixed top-4 right-4 z-[510] w-10 h-10 bg-white/90 backdrop-blur flex items-center justify-center rounded-full shadow-md outline-none animate-in fade-in"
+          >
+            <X size={20} strokeWidth={1.5} />
+          </button>
+
           <div
             role="dialog"
             aria-modal="true"
-            className="relative z-10 w-full md:w-[215px] lg:w-[250px] min-w-[50vw] max-w-full md:max-w-2xl h-dvh bg-white shadow-2xl flex flex-col md:flex-row animate-in slide-in-from-right duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
+            className="relative z-10 w-full md:w-[215px] lg:w-[250px] min-w-[50vw] max-w-full md:max-w-2xl h-[100dvh] bg-white md:shadow-2xl flex flex-col md:flex-row animate-in slide-in-from-bottom md:slide-in-from-right duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-y-auto md:overflow-hidden hide-scrollbar"
           >
-            <button
-              type="button"
-              onClick={handleCloseProduct}
-              className="md:hidden absolute top-4 right-4 z-50 w-10 h-10 bg-white/90 backdrop-blur flex items-center justify-center rounded-full shadow-sm outline-none"
-            >
-              <X size={20} strokeWidth={1.5} />
-            </button>
-
-            {/* Left Media Area */}
-            <div className="w-full md:w-1/2 h-[50vh] min-h-[350px] md:min-h-0 md:h-full bg-[#f8f8f8] relative shrink-0 flex items-center justify-center border-b md:border-b-0 md:border-r border-black/5 overflow-hidden">
+            {/* Left Media Area - Standard Box Layout on Mobile */}
+            <div className="w-full md:w-1/2 h-[55vh] md:h-full bg-[#f8f8f8] shrink-0 relative flex items-center justify-center border-b md:border-b-0 md:border-r border-black/5 overflow-hidden z-10">
               {selectedProduct.canvas_state ? (
-                <div className="absolute inset-0 w-full h-full pointer-events-auto cursor-grab active:cursor-grabbing mix-blend-multiply flex items-center justify-center p-4">
+                <div className="absolute inset-0 w-full h-full pointer-events-auto cursor-grab active:cursor-grabbing mix-blend-multiply flex items-center justify-center p-4 md:p-8">
                   <Mini3DViewer
                     canvasState={selectedProduct.canvas_state}
                     tshirtColor={selectedProduct.tshirt_color || '#ffffff'}
@@ -864,10 +755,10 @@ export function Marketplace() {
                       e.stopPropagation();
                       setIsFullscreen(true);
                     }}
-                    className="absolute top-4 right-4 z-20 w-8 h-8 flex items-center justify-center rounded-full bg-white/80 backdrop-blur-sm text-black shadow-sm transition-all hover:bg-white hover:scale-110 outline-none"
+                    className="absolute top-4 right-4 md:top-6 md:right-6 z-20 w-10 h-10 flex items-center justify-center rounded-full bg-white/80 backdrop-blur-md text-black shadow-sm transition-all hover:bg-white hover:scale-110 outline-none"
                     aria-label="View fullscreen"
                   >
-                    <Maximize size={14} strokeWidth={2} />
+                    <Maximize size={16} strokeWidth={2} />
                   </button>
                 </div>
               ) : (
@@ -879,8 +770,8 @@ export function Marketplace() {
               )}
             </div>
 
-            {/* Right Details Area */}
-            <div className="w-full md:w-1/2 h-[50vh] md:h-full flex flex-col bg-white relative">
+            {/* Right Details Area - Clean Vertical Flow */}
+            <div className="w-full md:w-1/2 flex flex-col bg-white relative z-20 md:h-full md:overflow-y-auto min-h-[60vh] pb-12 md:pb-0">
               <button
                 type="button"
                 onClick={handleCloseProduct}
@@ -889,8 +780,14 @@ export function Marketplace() {
                 <X size={28} strokeWidth={1} />
               </button>
 
-              <div className="px-8 py-10 md:px-12 md:py-16 flex flex-col flex-1 overflow-y-auto hide-scrollbar">
-                <div className="mb-10">
+              {/* Mobile Drawer Pull Indicator */}
+              <div className="w-full flex justify-center pt-4 pb-2 md:hidden">
+                <div className="w-12 h-1.5 bg-neutral-200 rounded-full" />
+              </div>
+
+              {/* Content Box */}
+              <div className="flex flex-col flex-1 px-6 py-6 md:px-12 md:py-16 pb-32 md:pb-16">
+                <div className="mb-8 md:mb-10">
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex flex-wrap gap-1.5">
                       {selectedProduct.is_new && (
@@ -957,14 +854,14 @@ export function Marketplace() {
                   </div>
                 </div>
 
-                <div className="prose prose-sm text-neutral-500 font-light leading-relaxed mb-12 text-sm tracking-wide">
+                <div className="prose prose-sm text-neutral-500 font-light leading-relaxed mb-8 md:mb-12 text-sm tracking-wide">
                   <p>
                     {selectedProduct.description ||
                       'A quintessential luxury garment, engineered with precision and crafted from the finest sustainably sourced materials. Designed to drape perfectly while maintaining structural integrity.'}
                   </p>
                 </div>
 
-                <div className="mt-auto">
+                <div className="mt-auto md:mt-auto pt-4 border-t border-black/5 md:border-none">
                   <div className="flex justify-between items-center mb-6">
                     <span className="text-xs font-medium tracking-widest uppercase text-black">
                       Select Size
@@ -1003,7 +900,7 @@ export function Marketplace() {
                     })}
                   </div>
 
-                  <div className="flex items-center justify-between px-5 py-4 bg-[#fbfbfd] border border-black/[0.04] rounded-2xl mb-10 transition-all">
+                  <div className="flex items-center justify-between px-5 py-4 bg-[#fbfbfd] border border-black/[0.04] rounded-2xl mb-8 md:mb-10 transition-all">
                     <span className="text-[10px] font-medium uppercase tracking-widest text-neutral-500">
                       Quantity <span className="text-black font-bold ml-1">({focusedSize})</span>
                     </span>
@@ -1090,7 +987,6 @@ export function Marketplace() {
 
           <div className="w-px h-3 bg-neutral-200 hidden sm:block" />
 
-          {/* Perfected Cart Icon & Badge */}
           <Link
             to="/checkout"
             className={`relative flex items-center justify-center p-1 transition-all duration-300 outline-none ${cartAnim ? 'scale-110' : 'hover:opacity-60'}`}

@@ -173,7 +173,8 @@ export function ProjectedDecal({
     }
   }
 
-  const zDepth = decal.zDepth ?? 0.15;
+  // FORCE CLAMP to heavily aggressively restrict the projection so it never reaches the back of the shirt
+  const safeZDepth = Math.min(decal.zDepth ?? 0.04, 0.1);
 
   const MIN_UI_SIZE = 0.15;
   const uiSx = Math.max(Math.abs(sx), MIN_UI_SIZE);
@@ -253,7 +254,7 @@ export function ProjectedDecal({
           mesh={{ current: primaryMesh } as React.RefObject<THREE.Mesh>}
           position={decal.position}
           rotation={finalRotation}
-          scale={[sx, sy, zDepth]}
+          scale={[sx, sy, safeZDepth]}
           raycast={() => null}
           renderOrder={index + 1}
           castShadow={false}
@@ -285,8 +286,7 @@ export function ProjectedDecal({
               <Html center zIndexRange={[100, 0]} position={[0, 0, -0.05]}>
                 <div className="bg-white/95 p-2 rounded-lg shadow-2xl border border-blue-500/50 backdrop-blur-xl flex items-center justify-center min-w-50 pointer-events-auto">
                   <textarea
-                    // biome-ignore lint/a11y/noAutofocus: Intentional UX behavior for inline text editing
-                    autoFocus
+                    ref={(el) => el?.focus()}
                     defaultValue={decal.text}
                     onBlur={(e) => handleTextSubmit(e.target.value)}
                     onKeyDown={(e) => {
@@ -303,7 +303,9 @@ export function ProjectedDecal({
             {/* biome-ignore lint/a11y/noStaticElementInteractions: WebGL mesh interaction map */}
             <mesh
               userData={{ isDecalHitbox: true }}
-              position={[0, 0, zDepth / 2]}
+              // COMPLETELY DETACHED FROM zDepth
+              // Staggered outward slightly by layer index so top-layer decals literally block clicks on bottom decals
+              position={[0, 0, index * 0.002]}
               scale={isSelected ? [uiSx * 1.05, uiSy * 1.05, 1] : [uiSx, uiSy, 1]}
               castShadow={false}
               receiveShadow={false}
@@ -525,7 +527,8 @@ export function ProjectedDecal({
                 }
               }}
             >
-              <boxGeometry args={[1, 1, zDepth]} />
+              {/* Thicker 0.2 box geometry guarantees the raycaster will catch it even on extreme T-shirt curves */}
+              <boxGeometry args={[1, 1, 0.2]} />
               <meshBasicMaterial transparent opacity={0} depthTest={false} depthWrite={false} />
             </mesh>
 
@@ -533,7 +536,8 @@ export function ProjectedDecal({
               !isEditingText &&
               globalToolMode === 'default' &&
               !useEditorStore.getState().showMarqueeBox && (
-                <group position={[0, 0, zDepth / 2 + 0.01]}>
+                // Position handles visually above the 0.2 thickness hitbox (0.1 represents half of 0.2, plus padding)
+                <group position={[0, 0, 0.11 + index * 0.002]}>
                   <lineSegments
                     geometry={borderGeo}
                     scale={[uiSx, uiSy, 1]}

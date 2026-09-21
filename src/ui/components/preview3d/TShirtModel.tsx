@@ -1,6 +1,6 @@
 import { useGLTF } from '@react-three/drei';
 import { type ThreeEvent, useThree } from '@react-three/fiber';
-import { Suspense, useEffect, useMemo } from 'react';
+import { Suspense, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import tshirtManUrl from '@/assets/models/tshirtman.glb?url';
 import tshirtWomanUrl from '@/assets/models/tshirtwoman.glb?url';
@@ -22,31 +22,39 @@ export function TShirtModel() {
   const { decals, updateDecal, tshirtColor } = useEditorStore();
   const { camera } = useThree();
 
+  const previousModelRef = useRef<string>(apparelModel);
+
   const copiedScene = useMemo(() => {
-    const clone = gltfScene.clone();
+    const group = new THREE.Group();
+    gltfScene.updateMatrixWorld(true);
 
-    clone.traverse((child) => {
-      if (child.position) {
-        child.position.multiplyScalar(MODEL_SCALE);
-      }
+    gltfScene.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.geometry) {
+        const clonedMesh = new THREE.Mesh();
+        
+        clonedMesh.geometry = child.geometry.clone();
+        clonedMesh.geometry.applyMatrix4(child.matrixWorld);
+        clonedMesh.geometry.scale(MODEL_SCALE, MODEL_SCALE, MODEL_SCALE);
+        
+        clonedMesh.position.set(0, 0, 0);
+        clonedMesh.rotation.set(0, 0, 0);
+        clonedMesh.scale.set(1, 1, 1);
+        clonedMesh.updateMatrix();
 
-      if (child instanceof THREE.Mesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
-        if (!child.name) child.name = `mesh_${child.uuid}`;
-        child.userData.isTargetMesh = true;
+        clonedMesh.castShadow = true;
+        clonedMesh.receiveShadow = true;
+        clonedMesh.name = child.name || `mesh_${child.uuid}`;
+        clonedMesh.userData.isTargetMesh = true;
 
         if (child.material) {
-          child.material = child.material.clone();
+          clonedMesh.material = child.material.clone();
         }
 
-        if (child.geometry) {
-          child.geometry = child.geometry.clone();
-          child.geometry.scale(MODEL_SCALE, MODEL_SCALE, MODEL_SCALE);
-        }
+        group.add(clonedMesh);
       }
     });
-    return clone;
+
+    return group;
   }, [gltfScene]);
 
   const primaryMesh = useMemo<THREE.Mesh | null>(() => {
@@ -101,6 +109,7 @@ export function TShirtModel() {
     }
   }, [primaryMesh, tshirtColor]);
 
+  // INITIAL PLACEMENT: Handles spawning new decals perfectly
   useEffect(() => {
     if (!primaryMesh?.geometry) return;
 
@@ -164,14 +173,100 @@ export function TShirtModel() {
       localMatrix.decompose(localPos, localQuat, localScale);
       const localEuler = new THREE.Euler().setFromQuaternion(localQuat);
 
+      let dynamicScale = 0.5;
+      if (primaryMesh.geometry.boundingBox) {
+        const box = primaryMesh.geometry.boundingBox;
+        const shirtWidth = box.max.x - box.min.x;
+        dynamicScale = shirtWidth * 0.35; 
+      }
+
       updateDecal(decal.id, {
         meshName: primaryMesh.name,
         position: [localPos.x, localPos.y, localPos.z],
         rotation: [localEuler.x, localEuler.y, localEuler.z],
-        scale: 0.5,
+        scale: dynamicScale,
       });
     });
   }, [decals, primaryMesh, camera, updateDecal]);
+
+  // RE-SNAP ENGINE: Pulls buried decals perfectly up to the new surface when swapping models
+  useEffect(() => {
+    if (!primaryMesh?.geometry || previousModelRef.current === apparelModel) return;
+    
+    const placedDecals = decals.filter(
+      (d) => d.position[0] !== 0 || d.position[1] !== 0 || d.position[2] !== 0
+    );
+
+    if (placedDecals.length > 0) {
+      primaryMesh.updateMatrixWorld(true);
+
+      placedDecals.forEach((decal) => {
+        const dummyWorld = new THREE.Object3D();
+        const localPos = new THREE.Vector3(decal.position[0], decal.position[1], decal.position[2]);
+        const localEuler = new THREE.Euler(decal.rotation[0], decal.rotation[1], decal.rotation[2]);
+        const localQuat = new THREE.Quaternion().setFromEuler(localEuler);
+        
+        dummyWorld.position.copy(localPos);
+        dummyWorld.quaternion.copy(localQuat);
+        
+        primaryMesh.add(dummyWorld);
+        dummyWorld.updateMatrixWorld(true);
+        
+        const worldPos = new THREE.Vector3();
+        dummyWorld.getWorldPosition(worldPos);
+        
+        // Decal Z points away from mesh. We grab that forward vector to pull the raycaster out safely.
+        const forwardDir = new THREE.Vector3(0, 0, 1).applyQuaternion(dummyWorld.getWorldQuaternion(new THREE.Quaternion()));
+        
+        // Pull back 0.5 units along normal, then shoot straight back toward the new mesh
+        const rayOrigin = worldPos.clone().add(forwardDir.clone().multiplyScalar(0.5));
+        const rayDirection = forwardDir.clone().negate();
+        
+        const raycaster = new THREE.Raycaster(rayOrigin, rayDirection);
+        const hits = raycaster.intersectObject(primaryMesh, false);
+        
+        primaryMesh.remove(dummyWorld);
+
+        if (hits.length > 0) {
+          const hit = hits[0];
+          const hitWorldPos = hit.point.clone();
+          const normalMatrix = new THREE.Matrix3().getNormalMatrix(primaryMesh.matrixWorld);
+          const worldNormal = hit.face?.normal
+            ? hit.face.normal.clone().applyMatrix3(normalMatrix).normalize()
+            : new THREE.Vector3(0, 0, 1);
+
+          const newDummy = new THREE.Object3D();
+          newDummy.position.copy(hitWorldPos);
+          if (Math.abs(worldNormal.y) > 0.999) {
+            newDummy.up.set(0, 0, 1);
+          } else {
+            newDummy.up.set(0, 1, 0);
+          }
+          newDummy.lookAt(hitWorldPos.clone().add(worldNormal));
+          newDummy.updateMatrixWorld(true);
+
+          const inverseParentMatrix = new THREE.Matrix4().copy(primaryMesh.matrixWorld).invert();
+          const localMatrix = new THREE.Matrix4().multiplyMatrices(
+            inverseParentMatrix,
+            newDummy.matrixWorld,
+          );
+
+          const newLocalPos = new THREE.Vector3();
+          const newLocalQuat = new THREE.Quaternion();
+          const newLocalScale = new THREE.Vector3();
+          localMatrix.decompose(newLocalPos, newLocalQuat, newLocalScale);
+          const newLocalEuler = new THREE.Euler().setFromQuaternion(newLocalQuat);
+
+          updateDecal(decal.id, {
+            position: [newLocalPos.x, newLocalPos.y, newLocalPos.z],
+            rotation: [newLocalEuler.x, newLocalEuler.y, newLocalEuler.z],
+          });
+        }
+      });
+    }
+
+    previousModelRef.current = apparelModel;
+  }, [apparelModel, primaryMesh, decals, updateDecal]);
 
   if (!primaryMesh) return <primitive object={copiedScene} />;
 
@@ -181,14 +276,16 @@ export function TShirtModel() {
         object={copiedScene}
         onPointerDown={(e: ThreeEvent<PointerEvent>) => {
           const hitDecal = e.intersections.some((hit) => hit.object.userData?.isDecalHitbox);
-          if (hitDecal) {
-            // Strictly guard OrbitControls by ensuring rogue clicks that brush the model
-            // while aiming for a decal don't mistakenly unlock the camera
+          if (hitDecal) return;
+
+          const { autoSelect, selectedIds, setSelectedId, isDragging, globalToolMode } = useEditorStore.getState();
+
+          if (isDragging) return;
+
+          if (!autoSelect && selectedIds.length > 0 && globalToolMode === 'default') {
             e.stopPropagation();
             return;
           }
-          const { autoSelect, selectedIds, setSelectedId, isDragging } = useEditorStore.getState();
-          if (isDragging) return;
 
           if (autoSelect && selectedIds.length > 0) {
             e.stopPropagation();

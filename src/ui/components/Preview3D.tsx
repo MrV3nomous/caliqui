@@ -134,11 +134,9 @@ export function Preview3D() {
               MIDDLE: THREE.MOUSE.DOLLY,
               RIGHT: THREE.MOUSE.PAN,
             }}
-            enabled={
-              !isDragging &&
-              !isDrawingMode &&
-              (globalToolMode === 'default' || globalToolMode === 'camera')
-            }
+            // ABSOLUTE PRIORITY: OrbitControls is completely disabled during Edit Mode.
+            // It is only enabled when the user clicks the "Move" tool.
+            enabled={!isDragging && !isDrawingMode && globalToolMode === 'camera'}
           />
         </Canvas>
       </div>

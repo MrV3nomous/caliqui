@@ -174,7 +174,7 @@ export function ProjectedDecal({
   }
 
   // FORCE CLAMP to heavily aggressively restrict the projection so it never reaches the back of the shirt
-  const safeZDepth = Math.min(decal.zDepth ?? 0.04, 0.1);
+  const safeZDepth = Math.min(decal.zDepth ?? 0.04, 1);
 
   const MIN_UI_SIZE = 0.15;
   const uiSx = Math.max(Math.abs(sx), MIN_UI_SIZE);

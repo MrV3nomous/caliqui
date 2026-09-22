@@ -94,6 +94,7 @@ function Smart3DViewer({ product, onOpen }: { product: MarketplaceItem; onOpen: 
       ) : (
         <div className="absolute inset-0 w-full h-full z-20 cursor-grab active:cursor-grabbing animate-in fade-in duration-700">
           <Mini3DViewer
+            key={`grid-${product.id}`}
             canvasState={product.canvas_state}
             tshirtColor={product.tshirt_color || '#ffffff'}
             apparelModel={product.apparel_model || 'tshirtman'}
@@ -469,8 +470,9 @@ export function Marketplace() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<string>('All');
 
-  // Product Selection State
+  // Product Selection & Customization State
   const [selectedProduct, setSelectedProduct] = useState<MarketplaceItem | null>(null);
+  const [selectedFit, setSelectedFit] = useState<'tshirtman' | 'tshirtwoman'>('tshirtman');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [selectedSizes, setSelectedSizes] = useState<Record<string, number>>({
     XS: 0,
@@ -542,6 +544,7 @@ export function Marketplace() {
         setSelectedProduct(product);
         setSelectedSizes({ XS: 0, S: 0, M: 1, L: 0, XL: 0, XXL: 0 });
         setFocusedSize('M');
+        setSelectedFit((product.apparel_model as 'tshirtman' | 'tshirtwoman') || 'tshirtman'); // Sync fit
         document.body.style.overflow = 'hidden';
       }
     } else if (!itemId && selectedProduct?.id) {
@@ -606,6 +609,7 @@ export function Marketplace() {
     setSelectedProduct(product);
     setSelectedSizes({ XS: 0, S: 0, M: 1, L: 0, XL: 0, XXL: 0 });
     setFocusedSize('M');
+    setSelectedFit((product.apparel_model as 'tshirtman' | 'tshirtwoman') || 'tshirtman'); // Sync fit
     document.body.style.overflow = 'hidden';
     setTimeout(() => {
       isNavigating.current = false;
@@ -658,7 +662,7 @@ export function Marketplace() {
         price: currentItemPrice,
         canvasState: selectedProduct.canvas_state,
         tshirtColor: selectedProduct.tshirt_color,
-        apparelModel: selectedProduct.apparel_model,
+        apparelModel: selectedProduct.canvas_state ? selectedFit : selectedProduct.apparel_model, // Push specific selected fit
       });
       const newState = useCheckoutStore.getState();
       existing = newState.cart.find((c) => c.productId === selectedProduct.id);
@@ -698,10 +702,11 @@ export function Marketplace() {
             {selectedProduct.canvas_state ? (
               <div className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing mix-blend-multiply flex items-center justify-center">
                 <Mini3DViewer
+                  key={`fullscreen-${selectedProduct.id}-${selectedFit}`}
                   canvasState={selectedProduct.canvas_state}
                   tshirtColor={selectedProduct.tshirt_color || '#ffffff'}
                   fallbackImage={selectedProduct.thumbnail_url}
-                  apparelModel={selectedProduct.apparel_model || 'tshirtman'}
+                  apparelModel={selectedFit} // Real-time fullscreen fit swap
                 />
               </div>
             ) : (
@@ -744,10 +749,11 @@ export function Marketplace() {
               {selectedProduct.canvas_state ? (
                 <div className="absolute inset-0 w-full h-full pointer-events-auto cursor-grab active:cursor-grabbing mix-blend-multiply flex items-center justify-center p-4 md:p-8">
                   <Mini3DViewer
+                    key={`drawer-${selectedProduct.id}-${selectedFit}`}
                     canvasState={selectedProduct.canvas_state}
                     tshirtColor={selectedProduct.tshirt_color || '#ffffff'}
                     fallbackImage={selectedProduct.thumbnail_url}
-                    apparelModel={selectedProduct.apparel_model || 'tshirtman'}
+                    apparelModel={selectedFit} // Real-time drawer fit swap
                   />
                   <button
                     type="button"
@@ -862,6 +868,36 @@ export function Marketplace() {
                 </div>
 
                 <div className="mt-auto md:mt-auto pt-4 border-t border-black/5 md:border-none">
+                  {/* Fit Toggle (Only show if canvas_state exists, meaning it's a 3D custom garment) */}
+                  {selectedProduct.canvas_state && (
+                    <div className="flex justify-between items-center mb-6 border-b border-black/5 pb-6">
+                      <div className="flex items-center bg-[#fbfbfd] border border-black/5 rounded-full p-1 w-full max-w-[240px]">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedFit('tshirtman')}
+                          className={`flex-1 py-1.5 text-[9px] uppercase tracking-widest font-bold rounded-full transition-all outline-none ${
+                            selectedFit === 'tshirtman'
+                              ? 'bg-white shadow-sm text-black border border-black/5'
+                              : 'text-neutral-400 hover:text-black'
+                          }`}
+                        >
+                          Men's Fit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedFit('tshirtwoman')}
+                          className={`flex-1 py-1.5 text-[9px] uppercase tracking-widest font-bold rounded-full transition-all outline-none ${
+                            selectedFit === 'tshirtwoman'
+                              ? 'bg-white shadow-sm text-black border border-black/5'
+                              : 'text-neutral-400 hover:text-black'
+                          }`}
+                        >
+                          Women's Fit
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="flex justify-between items-center mb-6">
                     <span className="text-xs font-medium tracking-widest uppercase text-black">
                       Select Size

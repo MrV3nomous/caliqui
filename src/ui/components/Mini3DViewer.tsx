@@ -42,16 +42,6 @@ export function Mini3DViewer({
   fallbackImage?: string | null;
   apparelModel?: string;
 }) {
-  if (!canvasState || canvasState.length === 0) {
-    return fallbackImage ? (
-      <img
-        src={fallbackImage}
-        alt="Design Preview"
-        className="w-full h-full object-cover mix-blend-multiply pointer-events-none"
-      />
-    ) : null;
-  }
-
   return (
     <div className="w-full h-full cursor-grab active:cursor-grabbing relative touch-none">
       <Canvas
@@ -71,7 +61,7 @@ export function Mini3DViewer({
           }
         >
           <ViewerModel
-            decals={canvasState as unknown as DecalData[]}
+            decals={(canvasState || []) as unknown as DecalData[]}
             color={tshirtColor}
             apparelModel={apparelModel}
           />
@@ -86,6 +76,15 @@ export function Mini3DViewer({
           maxPolarAngle={Math.PI}
         />
       </Canvas>
+
+      {/* Optional fallback overlay if the 3D model fails to load at all */}
+      {(!canvasState || canvasState.length === 0) && fallbackImage && (
+        <img
+          src={fallbackImage}
+          alt="Design Preview"
+          className="absolute inset-0 w-full h-full object-cover mix-blend-multiply pointer-events-none opacity-0"
+        />
+      )}
     </div>
   );
 }
@@ -145,28 +144,42 @@ function ViewerModel({
   }, [decals]);
 
   const copiedScene = useMemo(() => {
-    const clone = scene.clone();
+    const group = new THREE.Group();
+    // Ensure all GLTF parent nodes calculate their transforms before we steal the mesh
+    scene.updateMatrixWorld(true);
 
-    clone.traverse((child) => {
-      if (child.position) {
-        child.position.multiplyScalar(MODEL_SCALE);
-      }
+    scene.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.geometry) {
+        const clonedMesh = new THREE.Mesh();
 
-      if (child instanceof THREE.Mesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
+        // Clone geometry to avoid mutating the cached GLTF file
+        clonedMesh.geometry = child.geometry.clone();
+
+        // BAKE WORLD TRANSFORM: This crushes nested nodes into pure vertices
+        clonedMesh.geometry.applyMatrix4(child.matrixWorld);
+
+        // APPLY SCALING
+        clonedMesh.geometry.scale(MODEL_SCALE, MODEL_SCALE, MODEL_SCALE);
+
+        // ZERO OUT LOCAL SPACE: Guaranteeing the 1:1 mathematical match with the Editor
+        clonedMesh.position.set(0, 0, 0);
+        clonedMesh.rotation.set(0, 0, 0);
+        clonedMesh.scale.set(1, 1, 1);
+        clonedMesh.updateMatrix();
+
+        clonedMesh.castShadow = true;
+        clonedMesh.receiveShadow = true;
+        clonedMesh.name = child.name || `mesh_${child.uuid}`;
 
         if (child.material) {
-          child.material = child.material.clone();
+          clonedMesh.material = child.material.clone();
         }
 
-        if (child.geometry) {
-          child.geometry = child.geometry.clone();
-          child.geometry.scale(MODEL_SCALE, MODEL_SCALE, MODEL_SCALE);
-        }
+        group.add(clonedMesh);
       }
     });
-    return clone;
+
+    return group;
   }, [scene]);
 
   const primaryMesh = useMemo<THREE.Mesh | null>(() => {
@@ -262,7 +275,8 @@ function SafeTextureDecal({
     }
   }
 
-  const scale = new THREE.Vector3(sx, sy, 0.9);
+  const safeZDepth = decal.zDepth;
+  const scale = new THREE.Vector3(sx, sy, safeZDepth);
   const blendMode = decal.blendMode === 'multiply' ? THREE.MultiplyBlending : THREE.NormalBlending;
 
   return createPortal(

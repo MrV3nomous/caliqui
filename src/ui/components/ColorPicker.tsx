@@ -1,4 +1,4 @@
-import { Ban, Check, Dices } from 'lucide-react';
+import { Ban, Check, Dices, Pipette } from 'lucide-react';
 import type React from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -197,12 +197,17 @@ export function ColorPicker({
   const [activeTab, setActiveTab] = useState<'presets' | 'custom'>('presets');
   const [hsva, setHsva] = useState<HSVA>(() => parseColorToHsva(color));
   const [localText, setLocalText] = useState(color);
+  const [supportsEyeDropper, setSupportsEyeDropper] = useState(false);
 
   const initialColorRef = useRef(color);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
-  // Setting coords to null initially prevents the 0,0 fly-in animation
+  const isDraggingRef = useRef(false);
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+
+  useEffect(() => {
+    setSupportsEyeDropper('EyeDropper' in window);
+  }, []);
 
   useEffect(() => {
     if (!isOpen) {
@@ -279,11 +284,27 @@ export function ColorPicker({
     let timeoutId: ReturnType<typeof setTimeout>;
     const resetTimer = () => {
       clearTimeout(timeoutId);
-      timeoutId = setTimeout(() => setIsOpen(false), 5000);
+      timeoutId = setTimeout(() => {
+        // Only collapse if the user is not actively dragging a slider
+        if (!isDraggingRef.current) {
+          setIsOpen(false);
+        } else {
+          resetTimer();
+        }
+      }, 5000);
     };
 
     resetTimer();
-    const activityEvents = ['mousemove', 'keydown', 'pointerdown', 'touchstart'];
+    const activityEvents = [
+      'mousemove',
+      'keydown',
+      'pointerdown',
+      'pointermove',
+      'pointerup',
+      'touchstart',
+      'touchmove',
+      'touchend',
+    ];
 
     activityEvents.forEach((evt) => {
       document.addEventListener(evt, resetTimer);
@@ -308,6 +329,7 @@ export function ColorPicker({
   const handleSvPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     onPointerDown?.();
+    isDraggingRef.current = true;
     const rect = e.currentTarget.getBoundingClientRect();
 
     const update = (evt: PointerEvent | React.PointerEvent) => {
@@ -323,6 +345,7 @@ export function ColorPicker({
     };
 
     const handlePointerUp = () => {
+      isDraggingRef.current = false;
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
@@ -334,6 +357,7 @@ export function ColorPicker({
   const handleHuePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     onPointerDown?.();
+    isDraggingRef.current = true;
     const rect = e.currentTarget.getBoundingClientRect();
 
     const update = (evt: PointerEvent | React.PointerEvent) => {
@@ -348,6 +372,7 @@ export function ColorPicker({
     };
 
     const handlePointerUp = () => {
+      isDraggingRef.current = false;
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
@@ -364,6 +389,25 @@ export function ColorPicker({
       v: Math.floor(Math.random() * 40) + 60,
       a: 1,
     });
+  };
+
+  const handleEyeDropper = async () => {
+    if ('EyeDropper' in window) {
+      try {
+        // Explicitly type the window object to satisfy both TS and Biome without using 'any'
+        type ExtendedWindow = Window &
+          typeof globalThis & {
+            EyeDropper: new () => { open: () => Promise<{ sRGBHex: string }> };
+          };
+
+        const EyeDropperConstructor = (window as ExtendedWindow).EyeDropper;
+        const eyeDropper = new EyeDropperConstructor();
+        const result = await eyeDropper.open();
+        handleHexSubmit(result.sRGBHex);
+      } catch {
+        // User aborted the eyedropper, do nothing
+      }
+    }
   };
 
   const handleHexSubmit = (newHex: string) => {
@@ -433,7 +477,6 @@ export function ColorPicker({
             style={{ top: coords.top, left: coords.left }}
             className="fixed z-[1000] w-full max-w-[300px] bg-white/95 backdrop-blur-3xl saturate-150 rounded-[24px] p-4 shadow-[0_24px_48px_-12px_rgba(0,0,0,0.18),0_0_2px_rgba(0,0,0,0.08)] animate-in fade-in zoom-in-[0.98] duration-200 ease-out border border-black/5 flex flex-col"
           >
-            {/* iOS-Style Segmented Control */}
             <div className="flex bg-black/[0.06] p-0.5 rounded-[10px] mb-4 relative shrink-0">
               <div
                 className="absolute inset-y-0.5 w-[calc(50%-2px)] bg-white rounded-[7px] shadow-[0_1px_3px_rgba(0,0,0,0.1),0_1px_2px_rgba(0,0,0,0.06)] ring-1 ring-black/[0.04] transition-transform duration-300 ease-[cubic-bezier(0.2,0,0,1)]"
@@ -458,7 +501,6 @@ export function ColorPicker({
               </button>
             </div>
 
-            {/* TAB CONTENT: PRESETS */}
             {activeTab === 'presets' && (
               <div className="grid grid-cols-8 gap-1.5 animate-in fade-in slide-in-from-left-2 duration-200 flex-1 content-start mb-2">
                 {PRESET_SWATCHES.map((swatch) => (
@@ -490,11 +532,9 @@ export function ColorPicker({
               </div>
             )}
 
-            {/* TAB CONTENT: CUSTOM */}
             {activeTab === 'custom' && (
               <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-right-2 duration-200 flex-1 mb-2">
                 <div className="flex gap-3 h-[180px]">
-                  {/* 2D Saturation / Value Picker */}
                   <div
                     className="relative flex-1 rounded-xl overflow-hidden cursor-crosshair shadow-[inset_0_0_0_1px_rgba(0,0,0,0.1)] touch-none select-none"
                     style={{ backgroundColor: `hsl(${hsva.h}, 100%, 50%)` }}
@@ -512,7 +552,6 @@ export function ColorPicker({
                     />
                   </div>
 
-                  {/* Vertical Hue Slider & Clear Transparent Button */}
                   <div className="w-4 flex flex-col gap-2 items-center">
                     {!disableAlpha && (
                       <button
@@ -545,7 +584,6 @@ export function ColorPicker({
                 </div>
 
                 <div className="space-y-3">
-                  {/* Alpha Slider */}
                   {!disableAlpha && (
                     <div
                       className="relative w-full h-3 rounded-full shadow-[inset_0_0_0_1px_rgba(0,0,0,0.1)] overflow-hidden touch-none select-none"
@@ -573,8 +611,7 @@ export function ColorPicker({
                     </div>
                   )}
 
-                  {/* Bottom Inputs Area */}
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
                     <div className="flex-1 bg-black/[0.03] border border-black/[0.04] rounded-lg px-2.5 h-8 flex items-center shadow-inner">
                       <span className="text-[10px] font-semibold text-neutral-400 mr-2 uppercase tracking-wide">
                         HEX
@@ -588,10 +625,22 @@ export function ColorPicker({
                         className="flex-1 font-mono uppercase text-[11px] tracking-wider font-medium bg-transparent border-0 text-black/80 outline-none w-full"
                       />
                     </div>
+
+                    {supportsEyeDropper && (
+                      <button
+                        type="button"
+                        onClick={handleEyeDropper}
+                        className="h-8 w-8 flex items-center justify-center bg-white hover:bg-neutral-50 border border-black/10 text-black/80 rounded-lg transition-all outline-none shadow-sm active:scale-95 shrink-0"
+                        title="Pick Color from Screen"
+                      >
+                        <Pipette size={14} strokeWidth={2} />
+                      </button>
+                    )}
+
                     <button
                       type="button"
                       onClick={handleRandomColor}
-                      className="h-8 px-3 flex items-center justify-center bg-white hover:bg-neutral-50 border border-black/10 text-black/80 rounded-lg transition-all outline-none shadow-sm active:scale-95 shrink-0"
+                      className="h-8 w-8 flex items-center justify-center bg-white hover:bg-neutral-50 border border-black/10 text-black/80 rounded-lg transition-all outline-none shadow-sm active:scale-95 shrink-0"
                       title="Random Color"
                     >
                       <Dices size={14} strokeWidth={2} />
@@ -601,7 +650,6 @@ export function ColorPicker({
               </div>
             )}
 
-            {/* Persistent Footer Actions */}
             <div className="flex justify-between items-center mt-3 pt-3 border-t border-black/[0.04] shrink-0">
               <button
                 type="button"

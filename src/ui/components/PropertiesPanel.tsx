@@ -404,7 +404,7 @@ export function PropertiesPanel({ activeDecalId }: { activeDecalId: string }) {
             label: 'Z-Depth (Bleed Control)',
             type: 'slider',
             min: 0.01,
-            max: 0.1,
+            max: 1,
             step: 0.01,
           }}
           activeDecal={activeDecal}

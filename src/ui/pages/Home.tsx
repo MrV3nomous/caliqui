@@ -1,361 +1,337 @@
-import { ArrowRight, ShoppingBag, Sparkles } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { ArrowRight, ShoppingBag } from 'lucide-react';
+import { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router';
+
+// Unique Assets Defined for Every Section
+import heroVideo from '@/assets/home/hero-lifestyle.mp4';
+import heroPoster from '@/assets/home/hero-poster.jpg';
+
+import m1Life from '@/assets/home/market-1-life.jpg';
+import m1Detail from '@/assets/home/market-1-detail.jpg';
+import m2Life from '@/assets/home/market-2-life.jpg';
+import m2Detail from '@/assets/home/market-2-detail.jpg';
+import m3Life from '@/assets/home/market-3-life.jpg';
+import m3Detail from '@/assets/home/market-3-detail.jpg';
+
+import studioIdea from '@/assets/home/studio-idea.jpg';
+import studioInterface from '@/assets/home/studio-interface.jpg';
+import studioProduction from '@/assets/home/studio-production.jpg';
+import studioFinal from '@/assets/home/studio-final.jpg';
+
+import indivBg1 from '@/assets/home/indiv-bg-1.jpg';
+import indivBg2 from '@/assets/home/indiv-bg-2.jpg';
+import indivBg3 from '@/assets/home/indiv-bg-3.jpg';
+
 import { env } from '@/shared/env';
 import { AuthModal } from '@/ui/components/AuthModal';
-import { PremiumLoader } from '@/ui/components/PremiumLoader';
 import { useAuthStore } from '@/ui/store/auth-store';
 import { useCheckoutStore } from '@/ui/store/checkout-store';
 
-const rawImages = import.meta.glob('@/assets/strips/*.{jpg,jpeg,png,webp}', { eager: true });
-const stripImages = Object.values(rawImages).map(
-  (module) => (module as { default: string }).default,
-);
-
-const displayImages = stripImages.length > 0 ? stripImages : Array(36).fill('');
-
-const columnsData = Array.from({ length: 6 }, (_, colIndex) => ({
-  id: `col-${colIndex}`,
-  images: [] as { id: string; src: string }[],
-}));
-
-displayImages.forEach((img, i) => {
-  columnsData[i % 6].images.push({
-    id: `img-${i}`,
-    src: img as string,
-  });
-});
-
-const animatedColumns = columnsData.map((col) => ({
-  ...col,
-  duplicatedImages: [...col.images, ...col.images.map((img) => ({ ...img, id: `${img.id}-dup` }))],
-}));
+const products = [
+  {
+    id: 1,
+    title: 'The Oversized Boxy Tee',
+    lifestyleImg: m1Life,
+    detailImg: m1Detail,
+  },
+  {
+    id: 2,
+    title: 'The Vintage Washed Tee',
+    lifestyleImg: m2Life,
+    detailImg: m2Detail,
+  },
+  {
+    id: 3,
+    title: 'The Minimalist Black Tee',
+    lifestyleImg: m3Life,
+    detailImg: m3Detail,
+  },
+];
 
 export function Home() {
   const { isAuthenticated, openAuthModal } = useAuthStore();
   const { cart } = useCheckoutStore();
   const [scrolled, setScrolled] = useState(false);
-  const [fomoIndex, setFomoIndex] = useState(0);
-  const [assetsLoaded, setAssetsLoaded] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const totalCartItems = cart.reduce(
     (acc, item) => acc + Object.values(item.sizes).reduce((a, b) => a + b, 0),
     0,
   );
 
-  const fomoMessages = [
-    'LIMITED EDITION DROPS AVAILABLE NOW',
-    'FREE GLOBAL SHIPPING ON ALL ORDERS',
-    'BESPOKE 3D ATELIER NOW OPEN',
-  ];
-
   useEffect(() => {
-    const loadAssets = async () => {
-      if (stripImages.length === 0) {
-        setAssetsLoaded(true);
-        return;
-      }
-      const promises = stripImages.slice(0, 12).map((src) => {
-        return new Promise((resolve) => {
-          const img = new Image();
-          img.src = src;
-          img.onload = resolve;
-          img.onerror = resolve;
-        });
-      });
-      await Promise.all(promises);
-      setAssetsLoaded(true);
-    };
-    loadAssets();
-  }, []);
+    const container = scrollRef.current;
+    if (!container) return;
 
-  useEffect(() => {
     const handleScroll = () => {
-      setScrolled(window.scrollY > 50);
+      setScrolled(container.scrollTop > 60);
     };
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setFomoIndex((prev) => (prev + 1) % fomoMessages.length);
-    }, 4000);
-    return () => clearInterval(interval);
-  }, [fomoMessages.length]);
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, []);
 
   return (
-    <div className="w-full min-h-dvh flex flex-col bg-white text-black font-sans selection:bg-neutral-200 overflow-x-hidden select-none">
-      <style>{`
-        @keyframes scroll-up { 0% { transform: translateY(0); } 100% { transform: translateY(-50%); } }
-        @keyframes scroll-down { 0% { transform: translateY(-50%); } 100% { transform: translateY(0); } }
-        .animate-scroll-up { animation: scroll-up 60s linear infinite; }
-        .animate-scroll-down { animation: scroll-down 60s linear infinite; }
-        .hide-scrollbar::-webkit-scrollbar { display: none; }
-        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-      `}</style>
-
-      {/* DYNAMIC ASSET LOADER */}
-      {!assetsLoaded && <PremiumLoader />}
-
-      {/* GLOBAL AUTH MODAL */}
+    <div 
+      ref={scrollRef}
+      id="home-scroll-container"
+      className="relative w-full h-[100dvh] overflow-y-auto overflow-x-hidden bg-[#FAFAFA] text-stone-900 font-sans selection:bg-stone-200 custom-scrollbar smooth-scroll"
+    >
       <AuthModal />
 
-      {/* ROTATING EDITORIAL BANNER */}
-      <div className="w-full bg-black text-white text-[9px] md:text-[10px] font-medium tracking-[0.2em] uppercase text-center py-2.5 relative z-60">
-        <div className="max-w-[1600px] mx-auto px-6 overflow-hidden relative">
-          <span
-            key={fomoIndex}
-            className="block animate-in fade-in slide-in-from-bottom-1 duration-700"
-          >
-            {fomoMessages[fomoIndex]}
-          </span>
-        </div>
+      {/* LUXURY NAVIGATION */}
+      <div className="fixed top-0 left-0 right-0 z-50 flex flex-col w-full pointer-events-none transition-all duration-500">
+        <header className={`w-full py-6 md:py-8 pointer-events-auto transition-all duration-500 ${scrolled ? 'py-4 md:py-5' : ''}`}>
+          <div className="max-w-[1600px] mx-auto px-6 lg:px-12 flex items-center justify-between">
+            <Link to="/" className="hover:opacity-60 transition-opacity duration-300 outline-none">
+              <img
+                src="/logo.png"
+                alt={env.VITE_APP_NAME}
+                className={`h-4 md:h-5 w-auto object-contain transition-all duration-500 ${scrolled ? 'brightness-0' : 'brightness-0 invert'}`}
+              />
+            </Link>
+
+            <div className="flex items-center gap-6 md:gap-10">
+              <Link
+                to="/marketplace"
+                className={`text-[10px] font-medium uppercase tracking-[0.15em] transition-opacity duration-500 outline-none hidden sm:block text-white/90 hover:text-white ${scrolled ? 'opacity-0 pointer-events-none absolute' : 'opacity-100 relative'}`}
+              >
+                Collection
+              </Link>
+              <Link
+                to="/editor"
+                className={`text-[10px] font-medium uppercase tracking-[0.15em] transition-opacity duration-500 outline-none hidden sm:block text-white/90 hover:text-white ${scrolled ? 'opacity-0 pointer-events-none absolute' : 'opacity-100 relative'}`}
+              >
+                Studio
+              </Link>
+
+              <div className={`w-px h-3 mx-2 hidden sm:block transition-opacity duration-500 bg-white/40 ${scrolled ? 'opacity-0 absolute' : 'opacity-100 relative'}`} />
+
+              {isAuthenticated ? (
+                <Link
+                  to="/dashboard"
+                  className={`text-[10px] font-medium uppercase tracking-[0.15em] transition-opacity duration-500 outline-none text-white/90 hover:text-white ${scrolled ? 'opacity-0 pointer-events-none absolute' : 'opacity-100 relative'}`}
+                >
+                  Account
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  onClick={openAuthModal}
+                  className={`text-[10px] font-medium uppercase tracking-[0.15em] transition-opacity duration-500 outline-none text-white/90 hover:text-white ${scrolled ? 'opacity-0 pointer-events-none absolute' : 'opacity-100 relative'}`}
+                >
+                  Sign In
+                </button>
+              )}
+
+              <Link
+                to="/checkout"
+                aria-label="Shopping Bag"
+                className={`relative flex items-center justify-center p-1 transition-transform duration-300 outline-none hover:scale-105 ${scrolled ? 'text-stone-900 hover:opacity-60' : 'text-white'}`}
+              >
+                <ShoppingBag size={18} strokeWidth={1.2} />
+                {totalCartItems > 0 && (
+                  <span className={`absolute -top-1.5 -right-2 text-[9px] font-bold min-w-4.5 h-4.5 px-1 rounded-full flex items-center justify-center border-2 transition-colors duration-500 ${scrolled ? 'bg-stone-900 text-white border-[#FAFAFA]' : 'bg-white text-stone-950 border-transparent'}`}>
+                    {totalCartItems}
+                  </span>
+                )}
+              </Link>
+            </div>
+          </div>
+        </header>
       </div>
 
-      {/* LUXURY GLOBAL HEADER - Synced with Marketplace */}
-      <header
-        className={`fixed w-full z-50 transition-all duration-500 ${
-          scrolled
-            ? 'top-0 bg-white/95 backdrop-blur-md border-b border-black/4 py-4 shadow-[0_4px_20px_rgba(0,0,0,0.01)]'
-            : 'top-8 bg-transparent py-6'
-        }`}
-      >
-        <div className="max-w-[1600px] mx-auto px-6 lg:px-12 flex items-center justify-between">
-          <Link to="/" className="hover:opacity-60 transition-opacity outline-none">
-            <img
-              src="/logo.png"
-              alt={env.VITE_APP_NAME}
-              className={`h-5 md:h-6 w-auto object-contain transition-all duration-500 ${scrolled ? '' : 'brightness-0 invert'}`}
-            />
-          </Link>
-
-          <div className="flex items-center gap-5 sm:gap-6 md:gap-8">
-            <Link
-              to="/marketplace"
-              className={`text-[10px] font-medium uppercase tracking-[0.15em] transition-colors outline-none hidden sm:block ${
-                scrolled ? 'text-neutral-500 hover:text-black' : 'text-white/70 hover:text-white'
-              }`}
-            >
-              Collection
-            </Link>
-            <Link
-              to="/editor"
-              className={`text-[10px] font-medium uppercase tracking-[0.15em] transition-colors outline-none hidden sm:block ${
-                scrolled ? 'text-neutral-500 hover:text-black' : 'text-white/70 hover:text-white'
-              }`}
-            >
-              Studio
-            </Link>
-
-            <div
-              className={`w-px h-3 mx-1 sm:mx-0 hidden sm:block ${scrolled ? 'bg-neutral-200' : 'bg-white/20'}`}
-            />
-
-            {isAuthenticated ? (
-              <Link
-                to="/dashboard"
-                className={`text-[10px] font-medium uppercase tracking-[0.15em] transition-colors flex items-center outline-none ${
-                  scrolled ? 'text-neutral-500 hover:text-black' : 'text-white/70 hover:text-white'
-                }`}
-              >
-                Account
-              </Link>
-            ) : (
-              <button
-                type="button"
-                onClick={openAuthModal}
-                className={`text-[10px] font-medium uppercase tracking-[0.15em] transition-colors flex items-center outline-none ${
-                  scrolled ? 'text-neutral-500 hover:text-black' : 'text-white/70 hover:text-white'
-                }`}
-              >
-                Sign In
-              </button>
-            )}
-
-            {/* Perfected Cart Icon & Badge */}
-            <Link
-              to="/checkout"
-              className={`relative flex items-center justify-center p-1 transition-all duration-300 outline-none ${
-                scrolled ? 'text-black hover:opacity-60' : 'text-white hover:opacity-70'
-              }`}
-            >
-              <ShoppingBag size={20} strokeWidth={1.2} />
-              {totalCartItems > 0 && (
-                <span
-                  className={`absolute -top-1.5 -right-2 text-[9px] font-bold min-w-4.5 h-4.5 px-1 rounded-full flex items-center justify-center border-2 shadow-sm ${
-                    scrolled
-                      ? 'bg-black text-white border-white'
-                      : 'bg-white text-black border-black/20'
-                  }`}
-                >
-                  {totalCartItems}
-                </span>
-              )}
-            </Link>
-          </div>
+      {/* 1. HERO */}
+      <section className="relative w-full h-[100dvh] bg-stone-950 flex flex-col items-center justify-center overflow-hidden">
+        <div className="absolute inset-0 w-full h-full">
+          <video
+            autoPlay
+            loop
+            muted
+            playsInline
+            poster={heroPoster} 
+            className="absolute inset-0 w-full h-full object-cover animate-in fade-in duration-[2s]"
+          >
+            <source src={heroVideo} type="video/mp4" />
+          </video>
         </div>
-      </header>
+        
+        <div className="absolute inset-0 bg-stone-950/40 pointer-events-none" />
 
-      {/* EDITORIAL HERO SECTION */}
-      <section className="relative w-full h-dvh bg-[#050505] flex items-center justify-center overflow-hidden">
-        {/* Subdued, slower background animation */}
-        <div className="absolute inset-0 w-[110%] left-[-5%] grid grid-cols-3 md:grid-cols-6 gap-2 md:gap-4 opacity-30 -rotate-1 scale-110 pointer-events-none">
-          {animatedColumns.map((col, i) => (
-            <div
-              key={col.id}
-              className={`flex-1 relative overflow-visible ${i > 2 ? 'hidden md:block' : ''}`}
-            >
-              <div
-                className={`absolute w-full flex flex-col ${i % 2 === 0 ? 'animate-scroll-up' : 'animate-scroll-down'}`}
-              >
-                {col.duplicatedImages.map((imgObj) => (
-                  <div
-                    key={imgObj.id}
-                    className="w-full aspect-3/4 bg-neutral-900 rounded-sm overflow-hidden shrink-0 shadow-lg mb-2 md:mb-4"
-                  >
-                    {imgObj.src ? (
-                      <img
-                        src={imgObj.src}
-                        alt="Fashion Campaign"
-                        loading="lazy"
-                        className="w-full h-full object-cover saturate-50"
-                      />
-                    ) : (
-                      <div className="w-full h-full bg-[#0a0a0a]" />
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div className="absolute inset-0 bg-linear-to-b from-black/80 via-black/30 to-black/90 pointer-events-none" />
-
-        <div className="relative z-10 max-w-300 w-full px-6 flex flex-col items-center text-center animate-in fade-in slide-in-from-bottom-8 duration-1000 mt-12">
-          <span className="text-white/50 text-[9px] md:text-[10px] font-medium uppercase tracking-[0.4em] mb-6">
-            Welcome to {env.VITE_APP_NAME}
-          </span>
-
-          <h1 className="text-5xl md:text-7xl lg:text-8xl font-light tracking-tight text-white leading-[1.1] mb-6">
-            Define Your <br className="hidden md:block" />
-            <span className="font-medium text-transparent bg-clip-text bg-linear-to-r from-neutral-100 to-neutral-400">
-              Aesthetic.
+        <div className="relative z-10 max-w-5xl w-full px-6 flex flex-col items-center text-center">
+          <h1 className="text-4xl md:text-6xl lg:text-7xl font-light tracking-tight text-white leading-[1.1] mb-12">
+            <span className="block animate-in fade-in slide-in-from-bottom-4 duration-1000 ease-out fill-mode-both delay-300">
+              Imagine it.
+            </span>
+            <span className="block animate-in fade-in slide-in-from-bottom-4 duration-1000 ease-out fill-mode-both delay-500 text-stone-300 mt-2">
+              Wear it.
             </span>
           </h1>
 
-          <p className="max-w-xl text-neutral-400 text-xs md:text-sm font-light mb-12 leading-relaxed tracking-wide">
-            Premium ready-to-wear pieces designed for the modern minimalist, or bespoke luxury
-            apparel engineered entirely by you in our 3D Atelier.
-          </p>
-
-          <div className="flex flex-col sm:flex-row items-center gap-4 w-full sm:w-auto">
+          <div className="flex flex-col sm:flex-row items-center gap-8 md:gap-12 w-full sm:w-auto animate-in fade-in duration-1000 delay-700 fill-mode-both">
+            <Link
+              to="/marketplace"
+              className="group flex items-center gap-3 text-[10px] font-medium uppercase tracking-[0.15em] text-white outline-none"
+            >
+              <span className="border-b border-transparent group-hover:border-white transition-colors duration-300 pb-1">Shop Collection</span>
+            </Link>
+            
             <Link
               to="/editor"
-              className="w-full sm:w-auto flex items-center justify-center gap-3 px-10 h-12 bg-white text-black rounded-full font-medium text-[10px] uppercase tracking-[0.15em] transition-colors hover:bg-neutral-200 outline-none"
+              className="group flex items-center gap-3 text-[10px] font-medium uppercase tracking-[0.15em] text-white outline-none"
             >
-              <Sparkles size={14} strokeWidth={1.5} />
-              <span>Enter The Studio</span>
-            </Link>
-
-            <Link
-              to="/marketplace"
-              className="w-full sm:w-auto flex items-center justify-center gap-3 px-10 h-12 bg-white/5 backdrop-blur-md border border-white/10 text-white rounded-full font-medium text-[10px] uppercase tracking-[0.15em] transition-colors hover:bg-white/10 outline-none"
-            >
-              <span>Explore Collection</span>
+              <span className="border-b border-transparent group-hover:border-white transition-colors duration-300 pb-1">Create Your Own</span>
             </Link>
           </div>
         </div>
       </section>
 
-      {/* THE ATELIER SECTION - Stripped of extreme rotations and heavy borders */}
-      <section className="flex-1 py-24 lg:py-40 px-6 lg:px-12 max-w-[1600px] w-full mx-auto grid grid-cols-1 lg:grid-cols-2 gap-16 items-center bg-white">
-        <div className="order-2 lg:order-1 aspect-square bg-[#f8f8f8] overflow-hidden relative flex items-center justify-center">
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,#ffffff_0%,transparent_100%)] opacity-50" />
-          <div className="relative z-10 w-2/3 h-2/3 bg-white shadow-[0_20px_60px_rgba(0,0,0,0.04)] flex items-center justify-center transition-transform duration-1000 hover:scale-105">
-            <div className="text-center space-y-4">
-              <img src="/logo.png" alt="Logo" className="w-12 h-12 mx-auto opacity-30" />
-              <p className="text-[10px] font-medium tracking-[0.2em] text-neutral-400 uppercase">
-                3D Atelier
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="order-1 lg:order-2 space-y-8 lg:pl-12">
-          <span className="text-neutral-400 text-[10px] font-medium uppercase tracking-[0.3em]">
-            Bespoke Engineering
-          </span>
-          <h2 className="text-4xl md:text-5xl lg:text-6xl font-light tracking-tight text-black leading-tight">
-            The Atelier, <br /> Digitized.
+      {/* 2. MADE BY CALIQUI */}
+      <section className="py-20 md:py-32 bg-[#FAFAFA] px-6 lg:px-12">
+        <div className="max-w-[1600px] mx-auto flex flex-col items-center">
+          
+          <h2 className="text-3xl md:text-5xl font-light tracking-tight text-stone-900 leading-[1.2] text-center mb-12 md:mb-16">
+            Beautiful things, <br className="md:hidden" />
+            <span className="text-stone-500">already imagined.</span>
           </h2>
-          <p className="text-neutral-500 font-light text-sm md:text-base leading-relaxed max-w-md tracking-wide">
-            Experience our groundbreaking 3D design studio. Import your artwork, manipulate
-            typography, and direct the exact placement of your vision onto our premium luxury
-            blanks.
-          </p>
-          <Link
-            to="/editor"
-            className="inline-flex items-center gap-3 font-medium text-[11px] uppercase tracking-[0.15em] text-black hover:text-neutral-400 transition-colors border-b border-black hover:border-neutral-400 pb-1 outline-none"
-          >
-            Start Creating <ArrowRight size={14} strokeWidth={1.5} />
-          </Link>
-        </div>
-      </section>
 
-      {/* CURATED COLLECTION SECTION - Clean, sharp edges */}
-      <section className="py-24 lg:py-40 bg-[#fbfbfd] px-6 lg:px-12 border-t border-black/2">
-        <div className="max-w-[1600px] mx-auto">
-          <div className="flex flex-col md:flex-row justify-between items-end gap-8 mb-16">
-            <div className="space-y-4 max-w-xl">
-              <span className="text-neutral-400 text-[10px] font-medium uppercase tracking-[0.3em]">
-                Ready-to-Wear
-              </span>
-              <h2 className="text-4xl md:text-5xl lg:text-6xl font-light tracking-tight text-black leading-tight">
-                Curated Precision.
-              </h2>
-            </div>
-            <Link
-              to="/marketplace"
-              className="inline-flex items-center gap-3 px-8 h-12 bg-black text-white rounded-full font-medium text-[10px] uppercase tracking-[0.15em] transition-all hover:bg-neutral-800 whitespace-nowrap outline-none"
-            >
-              View Full Collection
-            </Link>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 lg:gap-6">
-            {[1, 2, 3].map((item) => (
-              <div
-                key={`teaser-${item}`}
-                className="aspect-3/4 bg-[#f0f0f0] overflow-hidden group cursor-pointer relative"
-              >
-                {stripImages[item + 5] ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 lg:gap-12 w-full">
+            {products.map((item) => (
+              <Link to={`/marketplace`} key={item.id} className="group relative outline-none flex flex-col items-center pb-2">
+                <div className="w-full aspect-[3/4] bg-stone-100 overflow-hidden relative mb-4">
                   <img
-                    src={stripImages[item + 5] as string}
-                    alt="Campaign"
+                    src={item.lifestyleImg}
+                    alt={item.title}
                     loading="lazy"
-                    className="w-full h-full object-cover transition-transform duration-1000 group-hover:scale-105 saturate-[0.85]"
+                    className="absolute inset-0 w-full h-full object-cover transition-opacity duration-700 ease-in-out group-hover:opacity-0"
                   />
-                ) : (
-                  <div className="w-full h-full bg-[#f5f5f7] transition-transform duration-1000 group-hover:scale-105" />
-                )}
-              </div>
+                  <img
+                    src={item.detailImg}
+                    alt={`${item.title} detail`}
+                    loading="lazy"
+                    className="absolute inset-0 w-full h-full object-cover opacity-0 scale-105 transition-all duration-[1s] ease-out group-hover:opacity-100 group-hover:scale-100"
+                  />
+                </div>
+                
+                <h3 className="opacity-100 sm:opacity-0 group-hover:opacity-100 transition-all duration-300 transform translate-y-0 sm:translate-y-1 group-hover:translate-y-0 text-[10px] font-medium uppercase tracking-[0.15em] text-stone-500">
+                  {item.title}
+                </h3>
+              </Link>
             ))}
           </div>
+
         </div>
       </section>
 
-      {/* EDITORIAL FOOTER */}
-      <footer className="py-16 border-t border-black/4 px-6 lg:px-12 text-center flex flex-col items-center shrink-0 bg-white">
-        <img
-          src="/logo.png"
-          alt={env.VITE_APP_NAME}
-          className="h-5 w-auto object-contain mb-8 opacity-40 grayscale"
-        />
-        <p className="text-[10px] font-medium text-neutral-400 tracking-[0.2em] uppercase">
-          © {new Date().getFullYear()} {env.VITE_APP_NAME}. All rights reserved.
-        </p>
+      {/* 3. MADE BY YOU */}
+      <section className="py-20 md:py-32 px-6 lg:px-12 bg-white flex flex-col items-center border-t border-stone-100">
+        <h2 className="text-3xl md:text-5xl font-light tracking-tight text-stone-900 leading-[1.2] text-center mb-16 md:mb-20 max-w-3xl">
+          What if you could wear <br className="hidden md:block"/>
+          <span className="text-stone-500">the idea in your head?</span>
+        </h2>
+
+        <div className="max-w-[1600px] w-full mx-auto">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 lg:gap-8 mb-16">
+            
+            <div className="flex flex-col group">
+              <div className="aspect-[4/5] bg-stone-50 overflow-hidden relative">
+                <img 
+                  src={studioIdea} 
+                  className="absolute inset-0 w-full h-full object-cover grayscale opacity-80 transition-all duration-700 group-hover:grayscale-0 group-hover:opacity-100" 
+                  alt="Design Concept Sketch" 
+                  loading="lazy"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col group md:mt-8">
+              <div className="aspect-[4/5] bg-stone-50 overflow-hidden relative">
+                <img src={studioInterface} className="absolute inset-0 w-full h-full object-cover opacity-90 transition-all duration-700 group-hover:opacity-100" alt="3D Studio Interface" loading="lazy"/>
+              </div>
+            </div>
+
+            <div className="flex flex-col group md:mt-16">
+              <div className="aspect-[4/5] bg-stone-50 overflow-hidden relative">
+                <img src={studioProduction} className="absolute inset-0 w-full h-full object-cover opacity-90 transition-all duration-700 group-hover:opacity-100" alt="Physical Garment Production" loading="lazy"/>
+              </div>
+            </div>
+
+            <div className="flex flex-col group md:mt-24">
+              <div className="aspect-[4/5] bg-stone-50 overflow-hidden relative">
+                <img src={studioFinal} className="absolute inset-0 w-full h-full object-cover opacity-90 transition-all duration-700 group-hover:opacity-100" alt="Person wearing the design" loading="lazy"/>
+              </div>
+            </div>
+
+          </div>
+
+          <div className="flex justify-center">
+            <Link
+              to="/editor"
+              className="group inline-flex items-center gap-3 font-medium text-[10px] uppercase tracking-[0.15em] text-stone-900 transition-colors border-b border-stone-200 hover:border-stone-900 pb-1 outline-none"
+            >
+              Enter The Studio
+              <ArrowRight size={14} strokeWidth={1.5} className="transition-transform duration-300 ease-out group-hover:translate-x-1 text-stone-500 group-hover:text-stone-900" />
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* 4. INDIVIDUALITY STATEMENT */}
+      <section className="relative w-full py-32 md:py-48 overflow-hidden bg-[#FAFAFA] flex flex-col items-center justify-center border-t border-stone-100">
+        
+        <style>{`
+          @media (prefers-reduced-motion: no-preference) {
+            @keyframes slowfade {
+              0%, 25% { opacity: 1; transform: scale(1); }
+              33%, 92% { opacity: 0; transform: scale(1.02); }
+              100% { opacity: 1; transform: scale(1); }
+            }
+            .bg-slow-1 { animation: slowfade 36s infinite ease-in-out; }
+            .bg-slow-2 { animation: slowfade 36s infinite ease-in-out; animation-delay: 12s; opacity: 0; }
+            .bg-slow-3 { animation: slowfade 36s infinite ease-in-out; animation-delay: 24s; opacity: 0; }
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .bg-slow-2, .bg-slow-3 { display: none; }
+          }
+        `}</style>
+        
+        <div className="absolute inset-0 w-full h-full pointer-events-none">
+          <img src={indivBg1} className="absolute inset-0 w-full h-full object-cover bg-slow-1 opacity-10" alt="" />
+          <img src={indivBg2} className="absolute inset-0 w-full h-full object-cover bg-slow-2 opacity-10" alt="" />
+          <img src={indivBg3} className="absolute inset-0 w-full h-full object-cover bg-slow-3 opacity-10" alt="" />
+        </div>
+
+        <div className="relative z-10 text-center px-6">
+          <h2 className="text-3xl md:text-5xl lg:text-6xl font-light text-white tracking-tight leading-[1.2] max-w-4xl mx-auto uppercase">
+            There is no Caliqui look.
+          </h2>
+          <p className="text-2xl md:text-4xl lg:text-5xl font-light text-stone-400 mt-4 uppercase">
+            There is yours.
+          </p>
+        </div>
+      </section>
+
+      {/* 5. FOOTER */}
+      <footer className="py-12 md:py-16 px-6 lg:px-12 bg-white flex flex-col items-center justify-center text-center space-y-8 border-t border-stone-100">
+        <div className="flex items-center gap-8 md:gap-12">
+          <Link to="/marketplace" className="text-[10px] font-medium uppercase tracking-[0.15em] text-stone-500 hover:text-stone-900 transition-colors">
+            Collection
+          </Link>
+          <Link to="/editor" className="text-[10px] font-medium uppercase tracking-[0.15em] text-stone-500 hover:text-stone-900 transition-colors">
+            Studio
+          </Link>
+        </div>
+
+        <div className="flex flex-col items-center gap-3 pt-4">
+          <img
+            src="/logo.png"
+            alt={env.VITE_APP_NAME}
+            className="h-4 md:h-5 w-auto object-contain brightness-0 transition-opacity hover:opacity-70"
+          />
+          <p className="text-[9px] font-medium text-stone-400 tracking-[0.2em] uppercase mt-2">
+            © {new Date().getFullYear()} {env.VITE_APP_NAME} STUDIOS.
+          </p>
+        </div>
       </footer>
     </div>
   );

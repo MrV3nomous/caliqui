@@ -1,10 +1,12 @@
 import {
   Check,
   CheckCircle2,
+  Hand,
   Layers,
   LayoutGrid,
   Loader2,
   Minus,
+  MousePointer2,
   Pencil,
   Plus,
   Save,
@@ -38,6 +40,8 @@ export function EditorLayout() {
     init,
     isDrawingMode,
     globalToolMode,
+    setGlobalToolMode,
+    setSelectedId,
     brushSettings,
     setBrushSettings,
     designName,
@@ -64,11 +68,9 @@ export function EditorLayout() {
 
   const mobileInputRef = useRef<HTMLInputElement>(null);
 
-  // Modals State
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
 
-  // Flawless Size Selection State
   const [selectedSizes, setSelectedSizes] = useState<Record<string, number>>({
     S: 0,
     M: 0,
@@ -80,7 +82,6 @@ export function EditorLayout() {
   const [isAdding, setIsAdding] = useState(false);
   const [cartAnim, setCartAnim] = useState(false);
 
-  // Touch & Hold Logic for Mobile Size Removal
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isLongPress = useRef(false);
 
@@ -106,12 +107,37 @@ export function EditorLayout() {
     };
   }, [init]);
 
-  // Handle focus securely without using autoFocus prop
   useEffect(() => {
     if (showMobileNameInput && mobileInputRef.current) {
       mobileInputRef.current.focus();
     }
   }, [showMobileNameInput]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement
+      ) {
+        return;
+      }
+
+      if (e.code === 'Space' || e.key.toLowerCase() === 'v') {
+        e.preventDefault();
+        const currentMode = useEditorStore.getState().globalToolMode;
+        if (currentMode === 'camera') {
+          useEditorStore.getState().setGlobalToolMode('default');
+        } else {
+          useEditorStore.getState().setGlobalToolMode('camera');
+          useEditorStore.getState().setSelectedId(null);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const totalCartItems = cart.reduce(
     (acc, item) => acc + Object.values(item.sizes).reduce((a, b) => a + b, 0),
@@ -243,7 +269,38 @@ export function EditorLayout() {
       <ContextMenu />
       <AuthModal />
 
-      {/* APPLE-STYLE RESET MODAL */}
+      {/* QUICK ACCESS TOGGLE (EDIT & MOVE) - Beautiful Left-Side Vertical Pill */}
+      <div className="absolute top-24 left-4 sm:left-6 z-40 flex flex-col p-1.5 bg-white/60 backdrop-blur-3xl shadow-[0_8px_32px_-8px_rgba(0,0,0,0.15)] border border-white/50 ring-1 ring-black/[0.03] rounded-[1.5rem] pointer-events-auto">
+        <button
+          type="button"
+          onClick={() => setGlobalToolMode('default')}
+          className={`flex items-center justify-center w-10 h-10 rounded-full transition-all duration-400 ease-[cubic-bezier(0.23,1,0.32,1)] outline-none mb-1.5 ${
+            globalToolMode === 'default'
+              ? 'bg-black text-white shadow-[0_4px_12px_rgba(0,0,0,0.3)] scale-105'
+              : 'text-neutral-500 hover:text-black hover:bg-white hover:shadow-sm active:scale-95'
+          }`}
+          title="Edit Mode (V)"
+        >
+          <MousePointer2 size={16} strokeWidth={2} />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setGlobalToolMode('camera');
+            setSelectedId(null);
+          }}
+          className={`flex items-center justify-center w-10 h-10 rounded-full transition-all duration-400 ease-[cubic-bezier(0.23,1,0.32,1)] outline-none ${
+            globalToolMode === 'camera'
+              ? 'bg-black text-white shadow-[0_4px_12px_rgba(0,0,0,0.3)] scale-105'
+              : 'text-neutral-500 hover:text-black hover:bg-white hover:shadow-sm active:scale-95'
+          }`}
+          title="Move Camera (Space)"
+        >
+          <Hand size={16} strokeWidth={2} />
+        </button>
+      </div>
+
       {isResetModalOpen && (
         <div className="fixed inset-0 z-600 flex items-center justify-center p-4">
           <button
@@ -281,7 +338,6 @@ export function EditorLayout() {
         </div>
       )}
 
-      {/* APPLE-STYLE ADD TO CART MODAL */}
       {isOrderModalOpen && (
         <div className="fixed inset-0 z-500 flex items-center justify-center p-4">
           <button
@@ -443,9 +499,7 @@ export function EditorLayout() {
         </div>
       )}
 
-      {/* SEAMLESS LUXURY STUDIO HEADER - Strict No-Scrolling Flexbox Fixes */}
       <header className="h-17.5 w-full bg-white/95 backdrop-blur-md border-b border-black/4 flex items-center justify-between px-3 sm:px-6 z-40 shrink-0 select-none gap-2 sticky top-0">
-        {/* Left: Navigation & Context. Flex-1 allows taking space but min-w-0 stops overflow */}
         <div
           className={`flex items-center gap-1.5 sm:gap-4 shrink-0 transition-opacity duration-300 min-w-0 ${showMobileNameInput ? 'hidden sm:flex' : 'flex'}`}
         >
@@ -515,7 +569,6 @@ export function EditorLayout() {
           </Link>
         </div>
 
-        {/* Right: Actions & Tools. Flex-1 allows dynamic resizing without breaking the container */}
         <div
           className={`flex items-center gap-1.5 sm:gap-2 min-w-0 ${showMobileNameInput ? 'w-full justify-between' : 'justify-end shrink'}`}
         >
@@ -616,10 +669,8 @@ export function EditorLayout() {
         </div>
       </header>
 
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-40 flex justify-center pointer-events-none w-[95vw] md:w-auto">
-        <div className="bg-white/95 backdrop-blur-2xl shadow-[0_20px_60px_rgba(0,0,0,0.06)] border border-black/4 rounded-4xl p-1.5 pointer-events-auto max-w-full overflow-x-auto hide-scrollbar">
-          <Toolbar />
-        </div>
+      <div className="absolute bottom-4 sm:bottom-6 left-0 w-full z-40 flex justify-center pointer-events-none">
+        <Toolbar />
       </div>
 
       {!showRightDock && (

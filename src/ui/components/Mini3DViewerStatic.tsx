@@ -1,11 +1,10 @@
-import { Decal, Environment, Html, OrbitControls, useGLTF, useTexture } from '@react-three/drei';
-import { Canvas, createPortal } from '@react-three/fiber';
-import React, { Suspense, useEffect, useMemo, useState } from 'react';
+import { Decal, useGLTF, useTexture } from '@react-three/drei';
+import { Canvas, createPortal, useThree } from '@react-three/fiber';
+import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import tshirtManUrl from '@/assets/models/tshirtman.glb?url';
 import tshirtoversizedUrl from '@/assets/models/tshirtoversized.glb?url';
 import tshirtWomanUrl from '@/assets/models/tshirtwoman.glb?url';
-import { PremiumLoader } from '@/ui/components/PremiumLoader';
 import { applyImageFilters, type DecalData, generateAssetTexture } from '@/ui/store/editor-store';
 
 const MODELS: Record<string, string> = {
@@ -33,64 +32,89 @@ class DecalErrorBoundary extends React.Component<
   }
 }
 
-export function Mini3DViewer({
+export function Mini3DViewerStatic({
   canvasState,
   tshirtColor = '#ffffff',
-  fallbackImage,
   apparelModel = 'tshirtman',
+  onOpen,
 }: {
   canvasState?: Record<string, unknown>[] | null;
   tshirtColor?: string;
-  fallbackImage?: string | null;
   apparelModel?: string;
+  onOpen: () => void;
 }) {
+  const [isInView, setIsInView] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Virtualization: only mount canvas when in or near viewport
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setIsInView(entry.isIntersecting);
+      },
+      { threshold: 0.01, rootMargin: '250px' },
+    );
+
+    if (containerRef.current) {
+      observer.observe(containerRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, []);
+
   return (
-    <div className="w-full h-full cursor-grab active:cursor-grabbing relative touch-none">
-      <Canvas
-        camera={{ position: [0, 0, 4.5], fov: 45 }}
-        gl={{ preserveDrawingBuffer: true, alpha: true, antialias: true }}
-        className="w-full h-full outline-none"
-      >
-        <ambientLight intensity={0.6} />
-        <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} intensity={1} castShadow />
-        <Environment preset="city" />
+    <div
+      ref={containerRef}
+      className="absolute inset-0 w-full h-full bg-[#f8f8f8] overflow-hidden rounded-2xl select-none"
+    >
+      <button
+        type="button"
+        aria-label="View product details"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onOpen();
+        }}
+        className="absolute inset-0 w-full h-full cursor-pointer bg-transparent border-0 p-0 m-0 outline-none z-50 appearance-none"
+      />
 
-        <Suspense
-          fallback={
-            <Html center>
-              <PremiumLoader fullScreen={false} message="" />
-            </Html>
-          }
-        >
-          <ViewerModel
-            decals={(canvasState || []) as unknown as DecalData[]}
-            color={tshirtColor}
-            apparelModel={apparelModel}
-          />
-        </Suspense>
+      {isInView ? (
+        <div className="w-full h-full pointer-events-none z-20 relative">
+          <Canvas
+            frameloop="demand"
+            dpr={[1, 1.5]}
+            gl={{
+              preserveDrawingBuffer: false,
+              alpha: true,
+              antialias: false,
+              powerPreference: 'low-power',
+            }}
+            camera={{ position: [0, 0, 4.5], fov: 45 }}
+            className="w-full h-full outline-none"
+          >
+            <ambientLight intensity={0.9} />
+            <directionalLight position={[0, 3, 4]} intensity={1.2} />
+            <directionalLight position={[0, 3, -4]} intensity={0.9} />
 
-        <OrbitControls
-          enablePan={false}
-          enableZoom={true}
-          minDistance={2.5}
-          maxDistance={6.0}
-          minPolarAngle={0}
-          maxPolarAngle={Math.PI}
-        />
-      </Canvas>
-
-      {(!canvasState || canvasState.length === 0) && fallbackImage && (
-        <img
-          src={fallbackImage}
-          alt="Design Preview"
-          className="absolute inset-0 w-full h-full object-cover mix-blend-multiply pointer-events-none opacity-0"
-        />
+            <Suspense fallback={null}>
+              <StaticModel
+                decals={(canvasState || []) as unknown as DecalData[]}
+                color={tshirtColor}
+                apparelModel={apparelModel}
+              />
+            </Suspense>
+          </Canvas>
+        </div>
+      ) : (
+        <div className="w-full h-full flex items-center justify-center">
+          <div className="w-8 h-8 rounded-full border-2 border-black/10 animate-pulse" />
+        </div>
       )}
     </div>
   );
 }
 
-function ViewerModel({
+function StaticModel({
   decals,
   color,
   apparelModel,
@@ -102,6 +126,7 @@ function ViewerModel({
   const activeModelUrl = MODELS[apparelModel] || tshirtManUrl;
   const { scene } = useGLTF(activeModelUrl);
   const [hydratedDecals, setHydratedDecals] = useState<DecalData[]>([]);
+  const { invalidate } = useThree();
 
   useEffect(() => {
     let isMounted = true;
@@ -134,13 +159,14 @@ function ViewerModel({
     ).then((hydrated) => {
       if (isMounted) {
         setHydratedDecals(hydrated);
+        invalidate();
       }
     });
 
     return () => {
       isMounted = false;
     };
-  }, [decals]);
+  }, [decals, invalidate]);
 
   const copiedScene = useMemo(() => {
     const group = new THREE.Group();
@@ -156,9 +182,6 @@ function ViewerModel({
         clonedMesh.rotation.set(0, 0, 0);
         clonedMesh.scale.set(1, 1, 1);
         clonedMesh.updateMatrix();
-        clonedMesh.castShadow = true;
-        clonedMesh.receiveShadow = true;
-        clonedMesh.name = child.name || `mesh_${child.uuid}`;
 
         if (child.material) {
           clonedMesh.material = child.material.clone();
@@ -195,12 +218,12 @@ function ViewerModel({
     const mat = primaryMesh.material as THREE.MeshStandardMaterial;
     if (mat.color && color) {
       mat.color.set(color);
-      mat.roughness = 1;
-      mat.metalness = 0.5;
-      mat.envMapIntensity = 0.2;
+      mat.roughness = 0.9;
+      mat.metalness = 0.1;
       mat.needsUpdate = true;
+      invalidate();
     }
-  }, [primaryMesh, color]);
+  }, [primaryMesh, color, invalidate]);
 
   if (!primaryMesh) return <primitive object={copiedScene} />;
 
@@ -210,7 +233,7 @@ function ViewerModel({
       {hydratedDecals.map((decal, index) => (
         <DecalErrorBoundary key={decal.id || index}>
           <Suspense fallback={null}>
-            <ViewerDecal decal={decal} mesh={primaryMesh} index={index} />
+            <StaticDecal decal={decal} mesh={primaryMesh} index={index} />
           </Suspense>
         </DecalErrorBoundary>
       ))}
@@ -218,7 +241,7 @@ function ViewerModel({
   );
 }
 
-function ViewerDecal({
+function StaticDecal({
   decal,
   mesh,
   index,
@@ -228,10 +251,10 @@ function ViewerDecal({
   index: number;
 }) {
   if (!decal.src) return null;
-  return <SafeTextureDecal src={decal.src} decal={decal} mesh={mesh} index={index} />;
+  return <SafeTextureStaticDecal src={decal.src} decal={decal} mesh={mesh} index={index} />;
 }
 
-function SafeTextureDecal({
+function SafeTextureStaticDecal({
   src,
   decal,
   mesh,
@@ -243,6 +266,14 @@ function SafeTextureDecal({
   index: number;
 }) {
   const texture = useTexture(src);
+  const { invalidate } = useThree();
+
+  useEffect(() => {
+    if (texture) {
+      invalidate();
+    }
+  }, [texture, invalidate]);
+
   const position = new THREE.Vector3(...(decal.position || [0, 0, 0]));
   const rotation = new THREE.Euler(...(decal.rotation || [0, 0, 0]));
   const ratio = decal.aspectRatio || 1;

@@ -1,26 +1,23 @@
 import { ArrowRight, ShoppingBag } from 'lucide-react';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 
 // Unique Assets Defined for Every Section
 import heroVideo from '@/assets/home/hero-lifestyle.mp4';
 import heroPoster from '@/assets/home/hero-poster.jpg';
-
-import m1Life from '@/assets/home/market-1-life.jpg';
-import m1Detail from '@/assets/home/market-1-detail.jpg';
-import m2Life from '@/assets/home/market-2-life.jpg';
-import m2Detail from '@/assets/home/market-2-detail.jpg';
-import m3Life from '@/assets/home/market-3-life.jpg';
-import m3Detail from '@/assets/home/market-3-detail.jpg';
-
-import studioIdea from '@/assets/home/studio-idea.jpg';
-import studioInterface from '@/assets/home/studio-interface.jpg';
-import studioProduction from '@/assets/home/studio-production.jpg';
-import studioFinal from '@/assets/home/studio-final.jpg';
-
 import indivBg1 from '@/assets/home/indiv-bg-1.jpg';
 import indivBg2 from '@/assets/home/indiv-bg-2.jpg';
 import indivBg3 from '@/assets/home/indiv-bg-3.jpg';
+import m1Detail from '@/assets/home/market-1-detail.jpg';
+import m1Life from '@/assets/home/market-1-life.jpg';
+import m2Detail from '@/assets/home/market-2-detail.jpg';
+import m2Life from '@/assets/home/market-2-life.jpg';
+import m3Detail from '@/assets/home/market-3-detail.jpg';
+import m3Life from '@/assets/home/market-3-life.jpg';
+import studioFinal from '@/assets/home/studio-final.jpg';
+import studioIdea from '@/assets/home/studio-idea.jpg';
+import studioInterface from '@/assets/home/studio-interface.jpg';
+import studioProduction from '@/assets/home/studio-production.jpg';
 
 import { env } from '@/shared/env';
 import { AuthModal } from '@/ui/components/AuthModal';
@@ -72,7 +69,7 @@ export function Home() {
   }, []);
 
   return (
-    <div 
+    <div
       ref={scrollRef}
       id="home-scroll-container"
       className="relative w-full h-[100dvh] overflow-y-auto overflow-x-hidden bg-[#FAFAFA] text-stone-900 font-sans selection:bg-stone-200 custom-scrollbar smooth-scroll"
@@ -81,7 +78,9 @@ export function Home() {
 
       {/* LUXURY NAVIGATION */}
       <div className="fixed top-0 left-0 right-0 z-50 flex flex-col w-full pointer-events-none transition-all duration-500">
-        <header className={`w-full py-6 md:py-8 pointer-events-auto transition-all duration-500 ${scrolled ? 'py-4 md:py-5' : ''}`}>
+        <header
+          className={`w-full py-6 md:py-8 pointer-events-auto transition-all duration-500 ${scrolled ? 'py-4 md:py-5' : ''}`}
+        >
           <div className="max-w-[1600px] mx-auto px-6 lg:px-12 flex items-center justify-between">
             <Link to="/" className="hover:opacity-60 transition-opacity duration-300 outline-none">
               <img
@@ -105,7 +104,9 @@ export function Home() {
                 Studio
               </Link>
 
-              <div className={`w-px h-3 mx-2 hidden sm:block transition-opacity duration-500 bg-white/40 ${scrolled ? 'opacity-0 absolute' : 'opacity-100 relative'}`} />
+              <div
+                className={`w-px h-3 mx-2 hidden sm:block transition-opacity duration-500 bg-white/40 ${scrolled ? 'opacity-0 absolute' : 'opacity-100 relative'}`}
+              />
 
               {isAuthenticated ? (
                 <Link
@@ -131,7 +132,9 @@ export function Home() {
               >
                 <ShoppingBag size={18} strokeWidth={1.2} />
                 {totalCartItems > 0 && (
-                  <span className={`absolute -top-1.5 -right-2 text-[9px] font-bold min-w-4.5 h-4.5 px-1 rounded-full flex items-center justify-center border-2 transition-colors duration-500 ${scrolled ? 'bg-stone-900 text-white border-[#FAFAFA]' : 'bg-white text-stone-950 border-transparent'}`}>
+                  <span
+                    className={`absolute -top-1.5 -right-2 text-[9px] font-bold min-w-4.5 h-4.5 px-1 rounded-full flex items-center justify-center border-2 transition-colors duration-500 ${scrolled ? 'bg-stone-900 text-white border-[#FAFAFA]' : 'bg-white text-stone-950 border-transparent'}`}
+                  >
                     {totalCartItems}
                   </span>
                 )}
@@ -149,13 +152,13 @@ export function Home() {
             loop
             muted
             playsInline
-            poster={heroPoster} 
+            poster={heroPoster}
             className="absolute inset-0 w-full h-full object-cover animate-in fade-in duration-[2s]"
           >
             <source src={heroVideo} type="video/mp4" />
           </video>
         </div>
-        
+
         <div className="absolute inset-0 bg-stone-950/40 pointer-events-none" />
 
         <div className="relative z-10 max-w-5xl w-full px-6 flex flex-col items-center text-center">
@@ -173,14 +176,18 @@ export function Home() {
               to="/marketplace"
               className="group flex items-center gap-3 text-[10px] font-medium uppercase tracking-[0.15em] text-white outline-none"
             >
-              <span className="border-b border-transparent group-hover:border-white transition-colors duration-300 pb-1">Shop Collection</span>
+              <span className="border-b border-transparent group-hover:border-white transition-colors duration-300 pb-1">
+                Shop Collection
+              </span>
             </Link>
-            
+
             <Link
               to="/editor"
               className="group flex items-center gap-3 text-[10px] font-medium uppercase tracking-[0.15em] text-white outline-none"
             >
-              <span className="border-b border-transparent group-hover:border-white transition-colors duration-300 pb-1">Create Your Own</span>
+              <span className="border-b border-transparent group-hover:border-white transition-colors duration-300 pb-1">
+                Create Your Own
+              </span>
             </Link>
           </div>
         </div>
@@ -189,7 +196,6 @@ export function Home() {
       {/* 2. MADE BY CALIQUI */}
       <section className="py-20 md:py-32 bg-[#FAFAFA] px-6 lg:px-12">
         <div className="max-w-[1600px] mx-auto flex flex-col items-center">
-          
           <h2 className="text-3xl md:text-5xl font-light tracking-tight text-stone-900 leading-[1.2] text-center mb-12 md:mb-16">
             Beautiful things, <br className="md:hidden" />
             <span className="text-stone-500">already imagined.</span>
@@ -197,7 +203,11 @@ export function Home() {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 lg:gap-12 w-full">
             {products.map((item) => (
-              <Link to={`/marketplace`} key={item.id} className="group relative outline-none flex flex-col items-center pb-2">
+              <Link
+                to={`/marketplace`}
+                key={item.id}
+                className="group relative outline-none flex flex-col items-center pb-2"
+              >
                 <div className="w-full aspect-[3/4] bg-stone-100 overflow-hidden relative mb-4">
                   <img
                     src={item.lifestyleImg}
@@ -212,33 +222,31 @@ export function Home() {
                     className="absolute inset-0 w-full h-full object-cover opacity-0 scale-105 transition-all duration-[1s] ease-out group-hover:opacity-100 group-hover:scale-100"
                   />
                 </div>
-                
+
                 <h3 className="opacity-100 sm:opacity-0 group-hover:opacity-100 transition-all duration-300 transform translate-y-0 sm:translate-y-1 group-hover:translate-y-0 text-[10px] font-medium uppercase tracking-[0.15em] text-stone-500">
                   {item.title}
                 </h3>
               </Link>
             ))}
           </div>
-
         </div>
       </section>
 
       {/* 3. MADE BY YOU */}
       <section className="py-20 md:py-32 px-6 lg:px-12 bg-white flex flex-col items-center border-t border-stone-100">
         <h2 className="text-3xl md:text-5xl font-light tracking-tight text-stone-900 leading-[1.2] text-center mb-16 md:mb-20 max-w-3xl">
-          What if you could wear <br className="hidden md:block"/>
+          What if you could wear <br className="hidden md:block" />
           <span className="text-stone-500">the idea in your head?</span>
         </h2>
 
         <div className="max-w-[1600px] w-full mx-auto">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 lg:gap-8 mb-16">
-            
             <div className="flex flex-col group">
               <div className="aspect-[4/5] bg-stone-50 overflow-hidden relative">
-                <img 
-                  src={studioIdea} 
-                  className="absolute inset-0 w-full h-full object-cover grayscale opacity-80 transition-all duration-700 group-hover:grayscale-0 group-hover:opacity-100" 
-                  alt="Design Concept Sketch" 
+                <img
+                  src={studioIdea}
+                  className="absolute inset-0 w-full h-full object-cover grayscale opacity-80 transition-all duration-700 group-hover:grayscale-0 group-hover:opacity-100"
+                  alt="Design Concept Sketch"
                   loading="lazy"
                 />
               </div>
@@ -246,22 +254,36 @@ export function Home() {
 
             <div className="flex flex-col group md:mt-8">
               <div className="aspect-[4/5] bg-stone-50 overflow-hidden relative">
-                <img src={studioInterface} className="absolute inset-0 w-full h-full object-cover opacity-90 transition-all duration-700 group-hover:opacity-100" alt="3D Studio Interface" loading="lazy"/>
+                <img
+                  src={studioInterface}
+                  className="absolute inset-0 w-full h-full object-cover opacity-90 transition-all duration-700 group-hover:opacity-100"
+                  alt="3D Studio Interface"
+                  loading="lazy"
+                />
               </div>
             </div>
 
             <div className="flex flex-col group md:mt-16">
               <div className="aspect-[4/5] bg-stone-50 overflow-hidden relative">
-                <img src={studioProduction} className="absolute inset-0 w-full h-full object-cover opacity-90 transition-all duration-700 group-hover:opacity-100" alt="Physical Garment Production" loading="lazy"/>
+                <img
+                  src={studioProduction}
+                  className="absolute inset-0 w-full h-full object-cover opacity-90 transition-all duration-700 group-hover:opacity-100"
+                  alt="Physical Garment Production"
+                  loading="lazy"
+                />
               </div>
             </div>
 
             <div className="flex flex-col group md:mt-24">
               <div className="aspect-[4/5] bg-stone-50 overflow-hidden relative">
-                <img src={studioFinal} className="absolute inset-0 w-full h-full object-cover opacity-90 transition-all duration-700 group-hover:opacity-100" alt="Person wearing the design" loading="lazy"/>
+                <img
+                  src={studioFinal}
+                  className="absolute inset-0 w-full h-full object-cover opacity-90 transition-all duration-700 group-hover:opacity-100"
+                  alt="Person wearing the design"
+                  loading="lazy"
+                />
               </div>
             </div>
-
           </div>
 
           <div className="flex justify-center">
@@ -270,7 +292,11 @@ export function Home() {
               className="group inline-flex items-center gap-3 font-medium text-[10px] uppercase tracking-[0.15em] text-stone-900 transition-colors border-b border-stone-200 hover:border-stone-900 pb-1 outline-none"
             >
               Enter The Studio
-              <ArrowRight size={14} strokeWidth={1.5} className="transition-transform duration-300 ease-out group-hover:translate-x-1 text-stone-500 group-hover:text-stone-900" />
+              <ArrowRight
+                size={14}
+                strokeWidth={1.5}
+                className="transition-transform duration-300 ease-out group-hover:translate-x-1 text-stone-500 group-hover:text-stone-900"
+              />
             </Link>
           </div>
         </div>
@@ -278,7 +304,6 @@ export function Home() {
 
       {/* 4. INDIVIDUALITY STATEMENT */}
       <section className="relative w-full py-32 md:py-48 overflow-hidden bg-[#FAFAFA] flex flex-col items-center justify-center border-t border-stone-100">
-        
         <style>{`
           @media (prefers-reduced-motion: no-preference) {
             @keyframes slowfade {
@@ -294,11 +319,23 @@ export function Home() {
             .bg-slow-2, .bg-slow-3 { display: none; }
           }
         `}</style>
-        
+
         <div className="absolute inset-0 w-full h-full pointer-events-none">
-          <img src={indivBg1} className="absolute inset-0 w-full h-full object-cover bg-slow-1 opacity-10" alt="" />
-          <img src={indivBg2} className="absolute inset-0 w-full h-full object-cover bg-slow-2 opacity-10" alt="" />
-          <img src={indivBg3} className="absolute inset-0 w-full h-full object-cover bg-slow-3 opacity-10" alt="" />
+          <img
+            src={indivBg1}
+            className="absolute inset-0 w-full h-full object-cover bg-slow-1 opacity-10"
+            alt=""
+          />
+          <img
+            src={indivBg2}
+            className="absolute inset-0 w-full h-full object-cover bg-slow-2 opacity-10"
+            alt=""
+          />
+          <img
+            src={indivBg3}
+            className="absolute inset-0 w-full h-full object-cover bg-slow-3 opacity-10"
+            alt=""
+          />
         </div>
 
         <div className="relative z-10 text-center px-6">
@@ -314,10 +351,16 @@ export function Home() {
       {/* 5. FOOTER */}
       <footer className="py-12 md:py-16 px-6 lg:px-12 bg-white flex flex-col items-center justify-center text-center space-y-8 border-t border-stone-100">
         <div className="flex items-center gap-8 md:gap-12">
-          <Link to="/marketplace" className="text-[10px] font-medium uppercase tracking-[0.15em] text-stone-500 hover:text-stone-900 transition-colors">
+          <Link
+            to="/marketplace"
+            className="text-[10px] font-medium uppercase tracking-[0.15em] text-stone-500 hover:text-stone-900 transition-colors"
+          >
             Collection
           </Link>
-          <Link to="/editor" className="text-[10px] font-medium uppercase tracking-[0.15em] text-stone-500 hover:text-stone-900 transition-colors">
+          <Link
+            to="/editor"
+            className="text-[10px] font-medium uppercase tracking-[0.15em] text-stone-500 hover:text-stone-900 transition-colors"
+          >
             Studio
           </Link>
         </div>

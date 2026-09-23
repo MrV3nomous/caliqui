@@ -34,11 +34,11 @@ const getThreeBlending = (mode?: string) => {
 
 export function ProjectedDecal({
   decal,
-  primaryMesh,
+  targetMeshes,
   index,
 }: {
   decal: DecalData;
-  primaryMesh: THREE.Mesh;
+  targetMeshes: THREE.Mesh[];
   index: number;
 }) {
   const {
@@ -65,6 +65,10 @@ export function ProjectedDecal({
   const paintCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const paintCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const isPaintingRef = useRef(false);
+
+  // We use targetMeshes[0] as our mathematical anchor, because all cloned meshes
+  // inside TShirtModel were baked to share the exact same transform origin.
+  const referenceMesh = targetMeshes[0];
 
   useEffect(() => {
     if (!isDragging && mode !== 'idle') {
@@ -173,12 +177,16 @@ export function ProjectedDecal({
     }
   }
 
-  // FORCE CLAMP to heavily aggressively restrict the projection so it never reaches the back of the shirt
-  const safeZDepth = Math.min(decal.zDepth ?? 0.04, 1);
+  sx = Number.isNaN(sx) ? 0.5 : sx;
+  sy = Number.isNaN(sy) ? 0.5 : sy;
+
+  const safeZDepth = Number.isNaN(Number(decal.zDepth))
+    ? 0.04
+    : Math.min(decal.zDepth as number, 1);
 
   const MIN_UI_SIZE = 0.15;
-  const uiSx = Math.max(Math.abs(sx), MIN_UI_SIZE);
-  const uiSy = Math.max(Math.abs(sy), MIN_UI_SIZE);
+  const uiSx = Math.max(Math.abs(sx || MIN_UI_SIZE), MIN_UI_SIZE);
+  const uiSy = Math.max(Math.abs(sy || MIN_UI_SIZE), MIN_UI_SIZE);
   const uiHsX = uiSx / 2;
   const uiHsY = uiSy / 2;
 
@@ -203,7 +211,11 @@ export function ProjectedDecal({
 
   const finalRotation = useMemo(() => {
     const dummy = new THREE.Object3D();
-    dummy.rotation.set(decal.rotation[0], decal.rotation[1], decal.rotation[2]);
+    dummy.rotation.set(
+      Number.isNaN(decal.rotation[0]) ? 0 : decal.rotation[0],
+      Number.isNaN(decal.rotation[1]) ? 0 : decal.rotation[1],
+      Number.isNaN(decal.rotation[2]) ? 0 : decal.rotation[2],
+    );
     if (decal.rotationOffset) dummy.rotateZ(decal.rotationOffset);
     return [dummy.rotation.x, dummy.rotation.y, dummy.rotation.z] as [number, number, number];
   }, [decal.rotation, decal.rotationOffset]);
@@ -249,34 +261,40 @@ export function ProjectedDecal({
 
   return (
     <>
-      {createPortal(
-        <Decal
-          mesh={{ current: primaryMesh } as React.RefObject<THREE.Mesh>}
-          position={decal.position}
-          rotation={finalRotation}
-          scale={[sx, sy, safeZDepth]}
-          raycast={() => null}
-          renderOrder={index + 1}
-          castShadow={false}
-          receiveShadow={false}
-        >
-          <meshStandardMaterial
-            map={texture}
-            transparent
-            blending={blendMode}
-            opacity={isEditingText ? 0 : 1}
-            polygonOffset
-            polygonOffsetFactor={-1 - index * 0.5}
-            depthTest={true}
-            depthWrite={false}
-            roughness={0.7}
-            metalness={0.0}
-            color={
-              isSelected && !isEditingText ? new THREE.Color(0xddddff) : new THREE.Color(0xffffff)
-            }
-          />
-        </Decal>,
-        primaryMesh,
+      {/* MAP OVER ALL TARGET MESHES: 
+          This projects the identical decal across every single disjointed piece of the T-shirt model.
+          The decal geometry naturally crops itself to bounds, creating a perfect seamless effect. */}
+      {targetMeshes.map((mesh) =>
+        createPortal(
+          <Decal
+            key={`decal-${decal.id}-${mesh.uuid}`}
+            mesh={{ current: mesh } as React.RefObject<THREE.Mesh>}
+            position={decal.position}
+            rotation={finalRotation}
+            scale={[sx, sy, safeZDepth]}
+            raycast={() => null}
+            renderOrder={index + 1}
+            castShadow={false}
+            receiveShadow={false}
+          >
+            <meshStandardMaterial
+              map={texture}
+              transparent
+              blending={blendMode}
+              opacity={isEditingText ? 0 : 1}
+              polygonOffset
+              polygonOffsetFactor={-1 - index * 0.5}
+              depthTest={true}
+              depthWrite={false}
+              roughness={0.7}
+              metalness={0.0}
+              color={
+                isSelected && !isEditingText ? new THREE.Color(0xddddff) : new THREE.Color(0xffffff)
+              }
+            />
+          </Decal>,
+          mesh,
+        ),
       )}
 
       {createPortal(
@@ -303,8 +321,6 @@ export function ProjectedDecal({
             {/* biome-ignore lint/a11y/noStaticElementInteractions: WebGL mesh interaction map */}
             <mesh
               userData={{ isDecalHitbox: true }}
-              // COMPLETELY DETACHED FROM zDepth
-              // Staggered outward slightly by layer index so top-layer decals literally block clicks on bottom decals
               position={[0, 0, index * 0.002]}
               scale={isSelected ? [uiSx * 1.05, uiSy * 1.05, 1] : [uiSx, uiSy, 1]}
               castShadow={false}
@@ -397,13 +413,15 @@ export function ProjectedDecal({
                 if (mode === 'drag' && isSelected && !isEditingText) {
                   const raycaster = new THREE.Raycaster();
                   raycaster.ray.copy(e.ray);
-                  const hits = raycaster.intersectObject(primaryMesh, false);
+
+                  // INTERSECT ALL MESHES: Ensures smooth dragging across multi-part clothing
+                  const hits = raycaster.intersectObjects(targetMeshes, false);
 
                   if (hits.length > 0) {
                     const hit = hits[0];
                     const worldPos = hit.point.clone();
                     const normalMatrix = new THREE.Matrix3().getNormalMatrix(
-                      primaryMesh.matrixWorld,
+                      hit.object.matrixWorld,
                     );
                     const worldNormal = hit.face?.normal
                       ? hit.face.normal.clone().applyMatrix3(normalMatrix).normalize()
@@ -423,7 +441,7 @@ export function ProjectedDecal({
                     dummyWorld.updateMatrixWorld(true);
 
                     const inverseParentMatrix = new THREE.Matrix4()
-                      .copy(primaryMesh.matrixWorld)
+                      .copy(referenceMesh.matrixWorld)
                       .invert();
                     const localMatrix = new THREE.Matrix4().multiplyMatrices(
                       inverseParentMatrix,
@@ -445,7 +463,7 @@ export function ProjectedDecal({
                     state.decals.forEach((d) => {
                       if (d.id === decal.id) {
                         updateDecal(d.id, {
-                          meshName: primaryMesh.name,
+                          meshName: referenceMesh.name,
                           position: [localPos.x, localPos.y, localPos.z],
                           rotation: [localEuler.x, localEuler.y, localEuler.z],
                         });
@@ -527,7 +545,6 @@ export function ProjectedDecal({
                 }
               }}
             >
-              {/* Thicker 0.2 box geometry guarantees the raycaster will catch it even on extreme T-shirt curves */}
               <boxGeometry args={[1, 1, 0.2]} />
               <meshBasicMaterial transparent opacity={0} depthTest={false} depthWrite={false} />
             </mesh>
@@ -536,7 +553,6 @@ export function ProjectedDecal({
               !isEditingText &&
               globalToolMode === 'default' &&
               !useEditorStore.getState().showMarqueeBox && (
-                // Position handles visually above the 0.2 thickness hitbox (0.1 represents half of 0.2, plus padding)
                 <group position={[0, 0, 0.11 + index * 0.002]}>
                   <lineSegments
                     geometry={borderGeo}
@@ -549,7 +565,7 @@ export function ProjectedDecal({
                   </lineSegments>
 
                   <SmartHandle
-                    primaryMesh={primaryMesh}
+                    primaryMesh={referenceMesh}
                     position={[-uiHsX, uiHsY, 0]}
                     scaleCursor="nwse-resize"
                     dirX={-1}
@@ -561,7 +577,7 @@ export function ProjectedDecal({
                     dragState={dragState}
                   />
                   <SmartHandle
-                    primaryMesh={primaryMesh}
+                    primaryMesh={referenceMesh}
                     position={[uiHsX, uiHsY, 0]}
                     scaleCursor="nesw-resize"
                     dirX={1}
@@ -573,7 +589,7 @@ export function ProjectedDecal({
                     dragState={dragState}
                   />
                   <SmartHandle
-                    primaryMesh={primaryMesh}
+                    primaryMesh={referenceMesh}
                     position={[-uiHsX, -uiHsY, 0]}
                     scaleCursor="nesw-resize"
                     dirX={-1}
@@ -585,7 +601,7 @@ export function ProjectedDecal({
                     dragState={dragState}
                   />
                   <SmartHandle
-                    primaryMesh={primaryMesh}
+                    primaryMesh={referenceMesh}
                     position={[uiHsX, -uiHsY, 0]}
                     scaleCursor="nwse-resize"
                     dirX={1}
@@ -598,7 +614,7 @@ export function ProjectedDecal({
                   />
 
                   <SmartHandle
-                    primaryMesh={primaryMesh}
+                    primaryMesh={referenceMesh}
                     position={[0, uiHsY, 0]}
                     scaleCursor="ns-resize"
                     dirX={0}
@@ -610,7 +626,7 @@ export function ProjectedDecal({
                     dragState={dragState}
                   />
                   <SmartHandle
-                    primaryMesh={primaryMesh}
+                    primaryMesh={referenceMesh}
                     position={[0, -uiHsY, 0]}
                     scaleCursor="ns-resize"
                     dirX={0}
@@ -622,7 +638,7 @@ export function ProjectedDecal({
                     dragState={dragState}
                   />
                   <SmartHandle
-                    primaryMesh={primaryMesh}
+                    primaryMesh={referenceMesh}
                     position={[uiHsX, 0, 0]}
                     scaleCursor="ew-resize"
                     dirX={1}
@@ -634,7 +650,7 @@ export function ProjectedDecal({
                     dragState={dragState}
                   />
                   <SmartHandle
-                    primaryMesh={primaryMesh}
+                    primaryMesh={referenceMesh}
                     position={[-uiHsX, 0, 0]}
                     scaleCursor="ew-resize"
                     dirX={-1}
@@ -682,7 +698,7 @@ export function ProjectedDecal({
               )}
           </group>
         </group>,
-        primaryMesh,
+        referenceMesh,
       )}
     </>
   );

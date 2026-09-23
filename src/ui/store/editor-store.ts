@@ -17,7 +17,7 @@ export type GlobalToolType =
 
 export type CameraView = 'front' | 'back' | 'left' | 'right' | 'top' | 'custom';
 
-export type ApparelModelType = 'tshirtman' | 'tshirtwoman';
+export type ApparelModelType = 'tshirtman' | 'tshirtwoman' | 'tshirtoversized';
 
 export interface BrushSettings {
   size: number;

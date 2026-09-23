@@ -742,6 +742,17 @@ export function EditorLayout() {
             >
               <Shirt size={16} strokeWidth={1.5} /> Women's T-Shirt
             </button>
+            <button
+              type="button"
+              onClick={() => setApparelModel('tshirtoversized')}
+              className={`w-full p-4 rounded-2xl border transition-all flex items-center gap-3 font-medium text-xs tracking-wide outline-none ${
+                apparelModel === 'tshirtoversized'
+                  ? 'border-black bg-neutral-50/50 text-black shadow-sm'
+                  : 'border-transparent text-neutral-500 hover:bg-neutral-100'
+              }`}
+            >
+              <Shirt size={16} strokeWidth={1.5} /> Oversized T-Shirt
+            </button>
           </div>
         </div>
       </div>

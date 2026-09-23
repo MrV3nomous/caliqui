@@ -3,6 +3,7 @@ import { type ThreeEvent, useThree } from '@react-three/fiber';
 import { Suspense, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import tshirtManUrl from '@/assets/models/tshirtman.glb?url';
+import tshirtoversizedUrl from '@/assets/models/tshirtoversized.glb?url';
 import tshirtWomanUrl from '@/assets/models/tshirtwoman.glb?url';
 import { useEditorStore } from '@/ui/store/editor-store';
 import { ProjectedDecal } from './ProjectedDecal';
@@ -10,6 +11,7 @@ import { ProjectedDecal } from './ProjectedDecal';
 const MODELS: Record<string, string> = {
   tshirtman: tshirtManUrl,
   tshirtwoman: tshirtWomanUrl,
+  tshirtoversized: tshirtoversizedUrl,
 };
 
 const MODEL_SCALE = 0.03;
@@ -36,6 +38,7 @@ export function TShirtModel() {
         clonedMesh.geometry.applyMatrix4(child.matrixWorld);
         clonedMesh.geometry.scale(MODEL_SCALE, MODEL_SCALE, MODEL_SCALE);
 
+        // Bake transforms so all meshes share the exact same origin coordinate space
         clonedMesh.position.set(0, 0, 0);
         clonedMesh.rotation.set(0, 0, 0);
         clonedMesh.scale.set(1, 1, 1);
@@ -57,82 +60,83 @@ export function TShirtModel() {
     return group;
   }, [gltfScene]);
 
-  const primaryMesh = useMemo<THREE.Mesh | null>(() => {
-    let largestMesh: THREE.Mesh | null = null;
-    let maxVolume = -1;
+  // ARRAY DETECTION: Collect ALL visible meshes to support multi-part clothing models
+  const targetMeshes = useMemo<THREE.Mesh[]>(() => {
+    const meshes: THREE.Mesh[] = [];
     copiedScene.traverse((child) => {
       if (child instanceof THREE.Mesh && child.geometry) {
-        if (!child.geometry.boundingBox) child.geometry.computeBoundingBox();
-        const box = child.geometry.boundingBox;
-        if (box) {
-          const volume =
-            (box.max.x - box.min.x) * (box.max.y - box.min.y) * (box.max.z - box.min.z);
-          if (volume > maxVolume) {
-            maxVolume = volume;
-            largestMesh = child;
-          }
+        if (!child.visible) return;
+        if (child.material && (child.material as THREE.Material).opacity === 0) return;
+        meshes.push(child);
+      }
+    });
+    return meshes;
+  }, [copiedScene]);
+
+  // UNIFIED BOUNDING BOX: Wraps perfectly around all collected mesh parts
+  const groupBoundingBox = useMemo(() => {
+    const box = new THREE.Box3();
+    targetMeshes.forEach((mesh) => {
+      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+      if (mesh.geometry.boundingBox) {
+        box.union(mesh.geometry.boundingBox);
+      }
+    });
+    return box;
+  }, [targetMeshes]);
+
+  // UNIFIED COLORING: Colors all parts of the shirt seamlessly
+  useEffect(() => {
+    targetMeshes.forEach((mesh) => {
+      if (mesh.material instanceof THREE.MeshStandardMaterial) {
+        mesh.material.color.set(tshirtColor);
+        mesh.material.roughness = 0.9;
+        mesh.material.metalness = 0.05;
+        mesh.material.needsUpdate = true;
+      } else {
+        const mat = mesh.material as THREE.Material & {
+          color?: THREE.Color;
+          roughness?: number;
+          metalness?: number;
+        };
+        if (mat.color) {
+          mat.color.set(tshirtColor);
+          mat.roughness = 0.9;
+          mat.metalness = 0.05;
+          mat.needsUpdate = true;
         }
       }
     });
-    return largestMesh;
-  }, [copiedScene]);
-
-  useEffect(() => {
-    if (!primaryMesh?.material) return;
-
-    if (primaryMesh.material instanceof THREE.MeshStandardMaterial) {
-      primaryMesh.material.color.set(tshirtColor);
-      primaryMesh.material.roughness = 0.9;
-      primaryMesh.material.metalness = 0.5;
-      primaryMesh.material.metalnessMap = null;
-      primaryMesh.material.roughnessMap = null;
-      primaryMesh.material.envMapIntensity = 0.4;
-      primaryMesh.material.needsUpdate = true;
-    } else {
-      const mat = primaryMesh.material as THREE.Material & {
-        color?: THREE.Color;
-        roughness?: number;
-        metalness?: number;
-        metalnessMap?: null;
-        roughnessMap?: null;
-        envMapIntensity?: number;
-      };
-      if (mat.color) {
-        mat.color.set(tshirtColor);
-        mat.roughness = 0.85;
-        mat.metalness = 0.0;
-        mat.metalnessMap = null;
-        mat.roughnessMap = null;
-        mat.envMapIntensity = 0.4;
-        mat.needsUpdate = true;
-      }
-    }
-  }, [primaryMesh, tshirtColor]);
+  }, [targetMeshes, tshirtColor]);
 
   // INITIAL PLACEMENT
   useEffect(() => {
-    if (!primaryMesh?.geometry) return;
+    if (targetMeshes.length === 0) return;
 
     const unplacedDecals = decals.filter(
       (d) => d.position[0] === 0 && d.position[1] === 0 && d.position[2] === 0,
     );
     if (unplacedDecals.length === 0) return;
 
-    primaryMesh.updateMatrixWorld(true);
+    targetMeshes.forEach((m) => {
+      m.updateMatrixWorld(true);
+    });
     camera.updateMatrixWorld(true);
 
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
 
-    const intersects = raycaster.intersectObject(primaryMesh, false);
+    // Intersect against ALL parts of the shirt
+    const intersects = raycaster.intersectObjects(targetMeshes, false);
 
     unplacedDecals.forEach((decal) => {
       const dummyWorld = new THREE.Object3D();
+      const referenceMatrix = targetMeshes[0].matrixWorld;
 
       if (intersects.length > 0) {
         const hit = intersects[0];
         const worldPos = hit.point.clone();
-        const normalMatrix = new THREE.Matrix3().getNormalMatrix(primaryMesh.matrixWorld);
+        const normalMatrix = new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld);
         const worldNormal = hit.face?.normal
           ? hit.face.normal.clone().applyMatrix3(normalMatrix).normalize()
           : new THREE.Vector3(0, 0, 1);
@@ -145,13 +149,9 @@ export function TShirtModel() {
         }
         dummyWorld.lookAt(worldPos.clone().add(worldNormal));
       } else {
-        if (!primaryMesh.geometry.boundingBox) primaryMesh.geometry.computeBoundingBox();
-        const box = primaryMesh.geometry.boundingBox;
-        if (!box) return;
-
         const centerLocal = new THREE.Vector3();
-        box.getCenter(centerLocal);
-        const centerWorld = centerLocal.applyMatrix4(primaryMesh.matrixWorld);
+        groupBoundingBox.getCenter(centerLocal);
+        const centerWorld = centerLocal.applyMatrix4(referenceMatrix);
         const camDirWorld = camera.getWorldDirection(new THREE.Vector3());
 
         dummyWorld.position.copy(centerWorld).sub(camDirWorld.clone().multiplyScalar(0.5));
@@ -161,7 +161,7 @@ export function TShirtModel() {
 
       dummyWorld.updateMatrixWorld(true);
 
-      const inverseParentMatrix = new THREE.Matrix4().copy(primaryMesh.matrixWorld).invert();
+      const inverseParentMatrix = new THREE.Matrix4().copy(referenceMatrix).invert();
       const localMatrix = new THREE.Matrix4().multiplyMatrices(
         inverseParentMatrix,
         dummyWorld.matrixWorld,
@@ -173,32 +173,30 @@ export function TShirtModel() {
       localMatrix.decompose(localPos, localQuat, localScale);
       const localEuler = new THREE.Euler().setFromQuaternion(localQuat);
 
-      let dynamicScale = 0.5;
-      if (primaryMesh.geometry.boundingBox) {
-        const box = primaryMesh.geometry.boundingBox;
-        const shirtWidth = box.max.x - box.min.x;
-        dynamicScale = shirtWidth * 0.35;
-      }
+      const shirtWidth = Math.abs(groupBoundingBox.max.x - groupBoundingBox.min.x);
+      const dynamicScale = Math.max(shirtWidth * 0.35, 0.1);
 
       updateDecal(decal.id, {
-        meshName: primaryMesh.name,
         position: [localPos.x, localPos.y, localPos.z],
         rotation: [localEuler.x, localEuler.y, localEuler.z],
         scale: dynamicScale,
       });
     });
-  }, [decals, primaryMesh, camera, updateDecal]);
+  }, [decals, targetMeshes, camera, groupBoundingBox, updateDecal]);
 
-  // RE-SNAP ENGINE: Pulls buried decals up to the surface without skewing rotation
+  // RE-SNAP ENGINE
   useEffect(() => {
-    if (!primaryMesh?.geometry || previousModelRef.current === apparelModel) return;
+    if (targetMeshes.length === 0 || previousModelRef.current === apparelModel) return;
 
     const placedDecals = decals.filter(
       (d) => d.position[0] !== 0 || d.position[1] !== 0 || d.position[2] !== 0,
     );
 
     if (placedDecals.length > 0) {
-      primaryMesh.updateMatrixWorld(true);
+      targetMeshes.forEach((m) => {
+        m.updateMatrixWorld(true);
+      });
+      const referenceMatrix = targetMeshes[0].matrixWorld;
 
       placedDecals.forEach((decal) => {
         const dummyWorld = new THREE.Object3D();
@@ -208,7 +206,7 @@ export function TShirtModel() {
         dummyWorld.position.copy(localPos);
         dummyWorld.rotation.copy(localEuler);
 
-        primaryMesh.add(dummyWorld);
+        targetMeshes[0].add(dummyWorld);
         dummyWorld.updateMatrixWorld(true);
 
         const worldPos = new THREE.Vector3();
@@ -222,16 +220,15 @@ export function TShirtModel() {
         const rayDirection = forwardDir.clone().negate();
 
         const raycaster = new THREE.Raycaster(rayOrigin, rayDirection);
-        const hits = raycaster.intersectObject(primaryMesh, false);
+        const hits = raycaster.intersectObjects(targetMeshes, false);
 
-        primaryMesh.remove(dummyWorld);
+        targetMeshes[0].remove(dummyWorld);
 
         if (hits.length > 0) {
           const hitWorldPos = hits[0].point.clone();
-          const inverseParentMatrix = new THREE.Matrix4().copy(primaryMesh.matrixWorld).invert();
+          const inverseParentMatrix = new THREE.Matrix4().copy(referenceMatrix).invert();
           const newLocalPos = hitWorldPos.applyMatrix4(inverseParentMatrix);
 
-          // Update ONLY the position to rest on the surface, keeping rotation untouched.
           updateDecal(decal.id, {
             position: [newLocalPos.x, newLocalPos.y, newLocalPos.z],
           });
@@ -240,9 +237,9 @@ export function TShirtModel() {
     }
 
     previousModelRef.current = apparelModel;
-  }, [apparelModel, primaryMesh, decals, updateDecal]);
+  }, [apparelModel, targetMeshes, decals, updateDecal]);
 
-  if (!primaryMesh) return <primitive object={copiedScene} />;
+  if (targetMeshes.length === 0) return <primitive object={copiedScene} />;
 
   return (
     <group name="workspace" scale={1.15}>
@@ -271,7 +268,7 @@ export function TShirtModel() {
 
       {decals.map((decal, index) => (
         <Suspense fallback={null} key={`${decal.id}-${apparelModel}`}>
-          <ProjectedDecal index={index} decal={decal} primaryMesh={primaryMesh} />
+          <ProjectedDecal index={index} decal={decal} targetMeshes={targetMeshes} />
         </Suspense>
       ))}
     </group>
@@ -280,3 +277,4 @@ export function TShirtModel() {
 
 useGLTF.preload(tshirtManUrl);
 useGLTF.preload(tshirtWomanUrl);
+useGLTF.preload(tshirtoversizedUrl);

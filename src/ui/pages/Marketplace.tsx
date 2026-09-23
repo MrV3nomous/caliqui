@@ -20,18 +20,17 @@ import { Link, useSearchParams } from 'react-router';
 import { env } from '@/shared/env';
 import { AuthModal } from '@/ui/components/AuthModal';
 import { Mini3DViewer } from '@/ui/components/Mini3DViewer';
+import { Mini3DViewerStatic } from '@/ui/components/Mini3DViewerStatic';
 import { useAuthStore } from '@/ui/store/auth-store';
 import { useCheckoutStore } from '@/ui/store/checkout-store';
 import type { MarketplaceItem } from '@/ui/store/marketplace-store';
 import { useMarketplaceStore } from '@/ui/store/marketplace-store';
 
-// Helper to calculate the final discounted price safely
 const getFinalPrice = (price: number, discount?: number) => {
   if (!discount || discount <= 0) return price;
   return Math.round(price * (1 - discount / 100));
 };
 
-// Intelligent sorter that guarantees "front" images appear before "back" images
 const getSortedGallery = (item: MarketplaceItem): string[] => {
   const urls =
     Array.isArray(item.gallery_urls) && item.gallery_urls.length > 0
@@ -56,56 +55,6 @@ const getSortedGallery = (item: MarketplaceItem): string[] => {
   });
 };
 
-// --- DIRECT LIVE 3D RENDERER (Optimized via Spatial Intersection) ---
-function Smart3DViewer({ product, onOpen }: { product: MarketplaceItem; onOpen: () => void }) {
-  const [isInView, setIsInView] = useState(false);
-  const observerRef = useRef<HTMLDivElement>(null);
-  const [pointerDownTime, setPointerDownTime] = useState(0);
-
-  // Mount/Unmount WebGL context based on viewport proximity to save massive amounts of memory
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        setIsInView(entry.isIntersecting);
-      },
-      { threshold: 0, rootMargin: '500px' }, // Pre-load slightly before it enters screen
-    );
-
-    if (observerRef.current) observer.observe(observerRef.current);
-    return () => observer.disconnect();
-  }, []);
-
-  return (
-    <div
-      ref={observerRef}
-      className="absolute inset-0 w-full h-full touch-none bg-[#f8f8f8] overflow-hidden rounded-2xl cursor-pointer isolate"
-      onPointerDown={() => setPointerDownTime(Date.now())}
-      onPointerUp={() => {
-        // Smart Click: < 250ms = opens drawer. > 250ms = dragging 3D model.
-        if (Date.now() - pointerDownTime < 250) {
-          onOpen();
-        }
-      }}
-    >
-      {!isInView ? (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <Loader2 size={24} strokeWidth={1.5} className="animate-spin text-neutral-300" />
-        </div>
-      ) : (
-        <div className="absolute inset-0 w-full h-full z-20 cursor-grab active:cursor-grabbing animate-in fade-in duration-700">
-          <Mini3DViewer
-            key={`grid-${product.id}`}
-            canvasState={product.canvas_state}
-            tshirtColor={product.tshirt_color || '#ffffff'}
-            apparelModel={product.apparel_model || 'tshirtman'}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-// --- SLEEK HOVER & DRAG CAROUSEL FOR GRID CARDS ---
 function ProductGridCarousel({
   urls,
   alt,
@@ -116,28 +65,25 @@ function ProductGridCarousel({
   onOpen: () => void;
 }) {
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [dragStart, setDragStart] = useState<number | null>(null);
-  const [dragEnd, setDragEnd] = useState<number | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
+  const dragStart = useRef<number | null>(null);
+  const isDragging = useRef(false);
+  const [isGrabbing, setIsGrabbing] = useState(false);
 
-  const handleDragStart = (clientX: number) => {
-    setDragStart(clientX);
-    setDragEnd(clientX);
-    setIsDragging(false);
+  const handlePointerDown = (e: React.PointerEvent) => {
+    dragStart.current = e.clientX;
+    isDragging.current = false;
+    setIsGrabbing(true);
   };
 
-  const handleDragMove = (clientX: number) => {
-    if (dragStart !== null) {
-      setDragEnd(clientX);
-      if (Math.abs(clientX - dragStart) > 5) {
-        setIsDragging(true);
-      }
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (dragStart.current !== null && Math.abs(e.clientX - dragStart.current) > 10) {
+      isDragging.current = true;
     }
   };
 
-  const handleDragEnd = () => {
-    if (dragStart !== null && dragEnd !== null && isDragging) {
-      const distance = dragStart - dragEnd;
+  const handlePointerUp = (e: React.PointerEvent) => {
+    if (dragStart.current !== null && isDragging.current) {
+      const distance = dragStart.current - e.clientX;
       const minSwipeDistance = 30;
 
       if (distance > minSwipeDistance) {
@@ -145,12 +91,13 @@ function ProductGridCarousel({
       } else if (distance < -minSwipeDistance) {
         setCurrentIndex((prev) => (prev - 1 + urls.length) % urls.length);
       }
-    } else if (!isDragging) {
+    } else if (!isDragging.current) {
+      e.preventDefault();
+      e.stopPropagation();
       onOpen();
     }
-    setDragStart(null);
-    setDragEnd(null);
-    setIsDragging(false);
+    dragStart.current = null;
+    setIsGrabbing(false);
   };
 
   if (urls.length === 0) {
@@ -158,8 +105,12 @@ function ProductGridCarousel({
       <button
         type="button"
         aria-label="Open product"
-        className="absolute inset-0 w-full h-full flex items-center justify-center cursor-pointer bg-transparent border-0 outline-none"
-        onClick={onOpen}
+        className="absolute inset-0 w-full h-full flex items-center justify-center cursor-pointer bg-[#f8f8f8] border-0 outline-none"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onOpen();
+        }}
       >
         <Box size={24} className="text-neutral-300" />
       </button>
@@ -167,44 +118,27 @@ function ProductGridCarousel({
   }
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: Custom swipe/drag carousel
     <div
-      className={`absolute inset-0 w-full h-full select-none ${isDragging ? 'cursor-grabbing' : 'cursor-pointer'}`}
-      onMouseLeave={() => {
-        setCurrentIndex(0);
-        setIsDragging(false);
-        setDragStart(null);
-      }}
-      onTouchStart={(e) => handleDragStart(e.touches[0].clientX)}
-      onTouchMove={(e) => handleDragMove(e.touches[0].clientX)}
-      onTouchEnd={handleDragEnd}
-      onMouseDown={(e) => handleDragStart(e.clientX)}
-      onMouseMove={(e) => handleDragMove(e.clientX)}
-      onMouseUp={handleDragEnd}
+      onPointerLeave={() => setIsGrabbing(false)}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={() => setIsGrabbing(false)}
+      className={`absolute inset-0 w-full h-full select-none touch-pan-y outline-none ${isGrabbing ? 'cursor-grabbing' : 'cursor-pointer'}`}
     >
       <img
         src={urls[currentIndex]}
         alt={alt}
         loading="lazy"
         draggable={false}
-        className="w-full h-full object-cover object-top transition-transform duration-1000 group-hover:scale-[1.05] mix-blend-multiply"
+        className="w-full h-full object-cover object-top transition-transform duration-1000 group-hover:scale-[1.05] mix-blend-multiply pointer-events-none"
       />
       {urls.length > 1 && (
-        <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-1.5 z-20">
+        <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-1.5 z-20 pointer-events-none">
           {urls.map((url, i) => (
-            <button
+            <div
               key={url}
-              type="button"
-              aria-label={`View image ${i + 1}`}
-              onMouseEnter={(e) => {
-                e.stopPropagation();
-                setCurrentIndex(i);
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                setCurrentIndex(i);
-              }}
-              className={`w-1.5 h-1.5 rounded-full transition-colors p-0 m-0 outline-none border-none ${
+              className={`w-1.5 h-1.5 rounded-full transition-colors ${
                 i === currentIndex ? 'bg-black' : 'bg-black/20'
               }`}
             />
@@ -215,7 +149,6 @@ function ProductGridCarousel({
   );
 }
 
-// --- INTERACTIVE CAROUSEL FOR THE DETAIL DRAWER & FULLSCREEN ---
 function ProductDrawerCarousel({
   urls,
   alt,
@@ -228,44 +161,41 @@ function ProductDrawerCarousel({
   isFullScreen?: boolean;
 }) {
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [dragStart, setDragStart] = useState<number | null>(null);
-  const [dragEnd, setDragEnd] = useState<number | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
+  const dragStart = useRef<number | null>(null);
+  const isDragging = useRef(false);
+  const [isGrabbing, setIsGrabbing] = useState(false);
   const [showSwipeHint, setShowSwipeHint] = useState(!isFullScreen);
 
-  const handleDragStart = (clientX: number) => {
-    setDragEnd(null);
-    setDragStart(clientX);
-    setIsDragging(false);
+  const handlePointerDown = (e: React.PointerEvent) => {
+    dragStart.current = e.clientX;
+    isDragging.current = false;
+    setIsGrabbing(true);
     setShowSwipeHint(false);
   };
 
-  const handleDragMove = (clientX: number) => {
-    if (dragStart !== null) {
-      setDragEnd(clientX);
-      if (Math.abs(clientX - dragStart) > 5) {
-        setIsDragging(true);
-      }
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (dragStart.current !== null && Math.abs(e.clientX - dragStart.current) > 10) {
+      isDragging.current = true;
     }
   };
 
-  const handleDragEnd = () => {
-    if (dragStart !== null) {
-      const distance = dragEnd !== null ? dragStart - dragEnd : 0;
+  const handlePointerUp = (e: React.PointerEvent) => {
+    if (dragStart.current !== null && isDragging.current) {
+      const distance = dragStart.current - e.clientX;
       const minSwipeDistance = 40;
 
-      if (Math.abs(distance) < 5 && !isDragging) {
-        onZoom?.();
-      } else if (distance > minSwipeDistance) {
+      if (distance > minSwipeDistance) {
         setCurrentIndex((prev) => (prev + 1) % urls.length);
       } else if (distance < -minSwipeDistance) {
         setCurrentIndex((prev) => (prev - 1 + urls.length) % urls.length);
       }
+    } else if (!isDragging.current && onZoom) {
+      e.preventDefault();
+      e.stopPropagation();
+      onZoom();
     }
-
-    setIsDragging(false);
-    setDragStart(null);
-    setDragEnd(null);
+    dragStart.current = null;
+    setIsGrabbing(false);
   };
 
   if (urls.length === 0) {
@@ -277,18 +207,13 @@ function ProductDrawerCarousel({
   }
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: Custom swipe/drag/zoom carousel
     <div
-      className={`w-full h-full relative flex items-center justify-center group/carousel bg-[#f8f8f8] overflow-hidden select-none ${isDragging ? 'cursor-grabbing' : onZoom ? 'cursor-zoom-in' : 'cursor-grab'} ${isFullScreen ? 'max-w-none p-4 md:p-16' : 'max-w-[500px] p-6 sm:p-12'}`}
-      onTouchStart={(e) => handleDragStart(e.targetTouches[0].clientX)}
-      onTouchMove={(e) => handleDragMove(e.targetTouches[0].clientX)}
-      onTouchEnd={handleDragEnd}
-      onMouseDown={(e) => handleDragStart(e.clientX)}
-      onMouseMove={(e) => handleDragMove(e.clientX)}
-      onMouseUp={handleDragEnd}
-      onMouseLeave={() => {
-        if (dragStart !== null) handleDragEnd();
-      }}
+      onPointerLeave={() => setIsGrabbing(false)}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={() => setIsGrabbing(false)}
+      className={`w-full h-full relative flex items-center justify-center group/carousel bg-[#f8f8f8] overflow-hidden select-none touch-pan-y outline-none ${isGrabbing ? 'cursor-grabbing' : onZoom ? 'cursor-zoom-in' : 'cursor-default'} ${isFullScreen ? 'max-w-none p-4 md:p-16' : 'max-w-[500px] p-6 sm:p-12'}`}
     >
       <img
         src={urls[currentIndex]}
@@ -304,7 +229,9 @@ function ProductDrawerCarousel({
             e.stopPropagation();
             onZoom();
           }}
-          className="absolute top-4 right-4 z-20 w-8 h-8 flex items-center justify-center rounded-full bg-white/80 backdrop-blur-sm text-black shadow-sm transition-all hover:bg-white hover:scale-110 outline-none"
+          onPointerDown={(e) => e.stopPropagation()}
+          onPointerUp={(e) => e.stopPropagation()}
+          className="absolute top-4 right-4 z-20 w-8 h-8 flex items-center justify-center rounded-full bg-white/80 backdrop-blur-sm text-black shadow-sm transition-all hover:bg-white hover:scale-110 outline-none cursor-pointer"
           aria-label="View fullscreen"
         >
           <Maximize size={14} strokeWidth={2} />
@@ -329,7 +256,9 @@ function ProductDrawerCarousel({
               e.stopPropagation();
               setCurrentIndex((prev) => (prev - 1 + urls.length) % urls.length);
             }}
-            className={`hidden md:flex absolute left-4 lg:left-8 top-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 hover:bg-white text-black shadow-md transition-all z-20 outline-none opacity-0 group-hover/carousel:opacity-100 hover:scale-110 ${isFullScreen ? 'w-14 h-14' : 'w-10 h-10'}`}
+            onPointerDown={(e) => e.stopPropagation()}
+            onPointerUp={(e) => e.stopPropagation()}
+            className={`hidden md:flex absolute left-4 lg:left-8 top-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 hover:bg-white text-black shadow-md transition-all z-20 outline-none opacity-0 group-hover/carousel:opacity-100 hover:scale-110 cursor-pointer ${isFullScreen ? 'w-14 h-14' : 'w-10 h-10'}`}
           >
             <ChevronLeft size={isFullScreen ? 28 : 20} strokeWidth={2} />
           </button>
@@ -341,7 +270,9 @@ function ProductDrawerCarousel({
               e.stopPropagation();
               setCurrentIndex((prev) => (prev + 1) % urls.length);
             }}
-            className={`hidden md:flex absolute right-4 lg:right-8 top-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 hover:bg-white text-black shadow-md transition-all z-20 outline-none opacity-0 group-hover/carousel:opacity-100 hover:scale-110 ${isFullScreen ? 'w-14 h-14' : 'w-10 h-10'}`}
+            onPointerDown={(e) => e.stopPropagation()}
+            onPointerUp={(e) => e.stopPropagation()}
+            className={`hidden md:flex absolute right-4 lg:right-8 top-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 hover:bg-white text-black shadow-md transition-all z-20 outline-none opacity-0 group-hover/carousel:opacity-100 hover:scale-110 cursor-pointer ${isFullScreen ? 'w-14 h-14' : 'w-10 h-10'}`}
           >
             <ChevronRight size={isFullScreen ? 28 : 20} strokeWidth={2} />
           </button>
@@ -356,7 +287,9 @@ function ProductDrawerCarousel({
                   e.stopPropagation();
                   setCurrentIndex(i);
                 }}
-                className={`h-2 rounded-full transition-all outline-none p-0 m-0 border-none ${
+                onPointerDown={(e) => e.stopPropagation()}
+                onPointerUp={(e) => e.stopPropagation()}
+                className={`h-2 rounded-full transition-all outline-none p-0 m-0 border-none cursor-pointer ${
                   i === currentIndex ? 'bg-black w-4' : 'bg-black/20 w-2 hover:bg-black/40'
                 }`}
               />
@@ -368,21 +301,22 @@ function ProductDrawerCarousel({
   );
 }
 
-// --- UNIVERSAL PRODUCT CARD COMPONENT ---
 function ProductCard({
   product,
   onOpen,
+  selectedFit,
 }: {
   product: MarketplaceItem;
   onOpen: (p: MarketplaceItem) => void;
+  selectedFit: 'tshirtman' | 'tshirtwoman' | 'tshirtoversized';
 }) {
   const sortedUrls = getSortedGallery(product);
+  const is3DModel = Boolean(product.canvas_state && product.canvas_state.length > 0);
 
   return (
     <div className="group flex flex-col w-full bg-transparent border-0 p-0 m-0 text-left">
       <div className="relative aspect-[4/5] overflow-hidden mb-6 w-full flex items-center justify-center bg-[#f8f8f8] rounded-2xl group-hover:bg-[#f0f0f0] transition-colors duration-500">
-        {/* Floating Promotional Tags */}
-        <div className="absolute top-4 left-4 z-20 flex flex-col gap-1.5 items-start">
+        <div className="absolute top-4 left-4 z-20 flex flex-col gap-1.5 items-start pointer-events-none">
           {product.is_new && (
             <span className="bg-blue-50 text-blue-600 px-2 py-1 text-[8px] font-bold uppercase tracking-widest rounded-md border border-blue-100/50">
               New
@@ -400,8 +334,13 @@ function ProductCard({
           )}
         </div>
 
-        {product.canvas_state ? (
-          <Smart3DViewer product={product} onOpen={() => onOpen(product)} />
+        {is3DModel ? (
+          <Mini3DViewerStatic
+            canvasState={product.canvas_state}
+            tshirtColor={product.tshirt_color || '#ffffff'}
+            apparelModel={selectedFit}
+            onOpen={() => onOpen(product)}
+          />
         ) : (
           <ProductGridCarousel
             urls={sortedUrls}
@@ -411,7 +350,6 @@ function ProductCard({
         )}
       </div>
 
-      {/* High-Fashion Typography */}
       <button
         type="button"
         className="flex flex-col items-center text-center w-full px-2 cursor-pointer outline-none border-0 bg-transparent"
@@ -460,19 +398,18 @@ export function Marketplace() {
     fetchRandomItems,
     fetchItems,
     incrementPopularity,
-    setSortBy,
   } = useMarketplaceStore();
 
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Marketplace State
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<string>('All');
 
-  // Product Selection & Customization State
   const [selectedProduct, setSelectedProduct] = useState<MarketplaceItem | null>(null);
-  const [selectedFit, setSelectedFit] = useState<'tshirtman' | 'tshirtwoman'>('tshirtman');
+  const [selectedFit, setSelectedFit] = useState<'tshirtman' | 'tshirtwoman' | 'tshirtoversized'>(
+    'tshirtman',
+  );
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [selectedSizes, setSelectedSizes] = useState<Record<string, number>>({
     XS: 0,
@@ -489,11 +426,13 @@ export function Marketplace() {
 
   const skeletonKeys = useMemo(() => Array.from({ length: 12 }).map(() => crypto.randomUUID()), []);
 
-  const isNavigating = useRef(false);
   const observerTarget = useRef<HTMLDivElement>(null);
-
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isLongPress = useRef(false);
+
+  // Ref lock to prevent URL and State sync loops
+  const isNavigating = useRef(false);
+  const drawerMountTime = useRef(0);
 
   useEffect(() => {
     fetchCollections();
@@ -533,9 +472,9 @@ export function Marketplace() {
     };
   }, [hasMore, isLoading, isLoadingMore, activeCategory, debouncedSearch, currentPage, fetchItems]);
 
-  // --- DEEP LINKING ROUTER LOGIC ---
+  // Deep Link Observer with Navigation Lock
   useEffect(() => {
-    if (isNavigating.current) return;
+    if (isNavigating.current) return; // Prevent async router loop
 
     const itemId = searchParams.get('item');
     if (itemId && items.length > 0) {
@@ -544,7 +483,6 @@ export function Marketplace() {
         setSelectedProduct(product);
         setSelectedSizes({ XS: 0, S: 0, M: 1, L: 0, XL: 0, XXL: 0 });
         setFocusedSize('M');
-        setSelectedFit((product.apparel_model as 'tshirtman' | 'tshirtwoman') || 'tshirtman'); // Sync fit
         document.body.style.overflow = 'hidden';
       }
     } else if (!itemId && selectedProduct?.id) {
@@ -604,27 +542,37 @@ export function Marketplace() {
 
   const handleOpenProduct = (product: MarketplaceItem) => {
     incrementPopularity(product.id);
+    drawerMountTime.current = Date.now();
+
+    // Enable lock before updating state/URL
     isNavigating.current = true;
+
     setSearchParams({ item: product.id });
     setSelectedProduct(product);
     setSelectedSizes({ XS: 0, S: 0, M: 1, L: 0, XL: 0, XXL: 0 });
     setFocusedSize('M');
-    setSelectedFit((product.apparel_model as 'tshirtman' | 'tshirtwoman') || 'tshirtman'); // Sync fit
+    setSelectedFit(
+      (product.apparel_model as 'tshirtman' | 'tshirtwoman' | 'tshirtoversized') || 'tshirtman',
+    );
     document.body.style.overflow = 'hidden';
+
+    // Release lock slightly after URL finishes registering
     setTimeout(() => {
       isNavigating.current = false;
-    }, 50);
+    }, 150);
   };
 
   const handleCloseProduct = () => {
     isNavigating.current = true;
-    setSearchParams({}, { replace: true });
+
+    setSearchParams({});
     setSelectedProduct(null);
     setIsFullscreen(false);
     document.body.style.overflow = 'auto';
+
     setTimeout(() => {
       isNavigating.current = false;
-    }, 50);
+    }, 150);
   };
 
   const handleShareLink = async () => {
@@ -662,7 +610,7 @@ export function Marketplace() {
         price: currentItemPrice,
         canvasState: selectedProduct.canvas_state,
         tshirtColor: selectedProduct.tshirt_color,
-        apparelModel: selectedProduct.canvas_state ? selectedFit : selectedProduct.apparel_model, // Push specific selected fit
+        apparelModel: selectedProduct.canvas_state ? selectedFit : selectedProduct.apparel_model,
       });
       const newState = useCheckoutStore.getState();
       existing = newState.cart.find((c) => c.productId === selectedProduct.id);
@@ -688,13 +636,12 @@ export function Marketplace() {
 
   return (
     <div className="w-full h-dvh flex flex-col bg-white font-sans selection:bg-neutral-200 text-black relative select-none">
-      {/* FULLSCREEN INSPECTION MODAL */}
       {isFullscreen && selectedProduct && (
         <div className="fixed inset-0 z-[600] bg-[#f8f8f8] flex flex-col animate-in fade-in zoom-in-95 duration-300">
           <button
             type="button"
             onClick={() => setIsFullscreen(false)}
-            className="absolute top-6 right-6 sm:top-8 sm:right-8 z-50 w-12 h-12 flex items-center justify-center bg-white/90 hover:bg-white backdrop-blur-md text-black rounded-full shadow-lg transition-transform hover:scale-110 outline-none"
+            className="absolute top-6 right-6 sm:top-8 sm:right-8 z-50 w-12 h-12 flex items-center justify-center bg-white/90 hover:bg-white backdrop-blur-md text-black rounded-full shadow-lg transition-transform hover:scale-110 outline-none cursor-pointer"
           >
             <X size={24} strokeWidth={1.5} />
           </button>
@@ -706,7 +653,7 @@ export function Marketplace() {
                   canvasState={selectedProduct.canvas_state}
                   tshirtColor={selectedProduct.tshirt_color || '#ffffff'}
                   fallbackImage={selectedProduct.thumbnail_url}
-                  apparelModel={selectedFit} // Real-time fullscreen fit swap
+                  apparelModel={selectedFit}
                 />
               </div>
             ) : (
@@ -720,31 +667,23 @@ export function Marketplace() {
         </div>
       )}
 
-      {/* LUXURY PRODUCT DRAWER (Clean Mobile Scrolling Layout) */}
       {selectedProduct && (
         <div className="fixed inset-0 z-[500] flex justify-end">
           <button
             type="button"
             aria-label="Close product details"
             className="absolute inset-0 w-full h-full bg-black/40 backdrop-blur-sm outline-none cursor-default border-0 p-0 m-0 animate-in fade-in duration-700"
-            onClick={handleCloseProduct}
+            onClick={(_e) => {
+              if (Date.now() - drawerMountTime.current < 400) return;
+              handleCloseProduct();
+            }}
           />
-
-          {/* Mobile Close Button */}
-          <button
-            type="button"
-            onClick={handleCloseProduct}
-            className="md:hidden fixed top-4 right-4 z-[510] w-10 h-10 bg-white/90 backdrop-blur flex items-center justify-center rounded-full shadow-md outline-none animate-in fade-in"
-          >
-            <X size={20} strokeWidth={1.5} />
-          </button>
 
           <div
             role="dialog"
             aria-modal="true"
             className="relative z-10 w-full md:w-[215px] lg:w-[250px] min-w-[50vw] max-w-full md:max-w-2xl h-[100dvh] bg-white md:shadow-2xl flex flex-col md:flex-row animate-in slide-in-from-bottom md:slide-in-from-right duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-y-auto md:overflow-hidden hide-scrollbar"
           >
-            {/* Left Media Area - Standard Box Layout on Mobile */}
             <div className="w-full md:w-1/2 h-[55vh] md:h-full bg-[#f8f8f8] shrink-0 relative flex items-center justify-center border-b md:border-b-0 md:border-r border-black/5 overflow-hidden z-10">
               {selectedProduct.canvas_state ? (
                 <div className="absolute inset-0 w-full h-full pointer-events-auto cursor-grab active:cursor-grabbing mix-blend-multiply flex items-center justify-center p-4 md:p-8">
@@ -753,7 +692,7 @@ export function Marketplace() {
                     canvasState={selectedProduct.canvas_state}
                     tshirtColor={selectedProduct.tshirt_color || '#ffffff'}
                     fallbackImage={selectedProduct.thumbnail_url}
-                    apparelModel={selectedFit} // Real-time drawer fit swap
+                    apparelModel={selectedFit}
                   />
                   <button
                     type="button"
@@ -761,7 +700,7 @@ export function Marketplace() {
                       e.stopPropagation();
                       setIsFullscreen(true);
                     }}
-                    className="absolute top-4 right-4 md:top-6 md:right-6 z-20 w-10 h-10 flex items-center justify-center rounded-full bg-white/80 backdrop-blur-md text-black shadow-sm transition-all hover:bg-white hover:scale-110 outline-none"
+                    className="absolute top-4 right-4 md:top-6 md:right-6 z-20 w-10 h-10 flex items-center justify-center rounded-full bg-white/80 backdrop-blur-md text-black shadow-sm transition-all hover:bg-white hover:scale-110 outline-none cursor-pointer"
                     aria-label="View fullscreen"
                   >
                     <Maximize size={16} strokeWidth={2} />
@@ -776,24 +715,22 @@ export function Marketplace() {
               )}
             </div>
 
-            {/* Right Details Area - Clean Vertical Flow */}
             <div className="w-full md:w-1/2 flex flex-col bg-white relative z-20 md:h-full md:overflow-y-auto min-h-[60vh] pb-12 md:pb-0">
               <button
                 type="button"
                 onClick={handleCloseProduct}
-                className="hidden md:flex absolute top-6 right-6 z-50 text-neutral-400 hover:text-black transition-colors outline-none"
+                className="absolute top-4 right-4 sm:top-6 sm:right-6 z-50 w-10 h-10 flex items-center justify-center bg-[#fbfbfd] hover:bg-neutral-100 rounded-full text-neutral-500 hover:text-black transition-colors outline-none border border-black/5 cursor-pointer"
+                aria-label="Close details"
               >
-                <X size={28} strokeWidth={1} />
+                <X size={20} strokeWidth={1.5} />
               </button>
 
-              {/* Mobile Drawer Pull Indicator */}
               <div className="w-full flex justify-center pt-4 pb-2 md:hidden">
                 <div className="w-12 h-1.5 bg-neutral-200 rounded-full" />
               </div>
 
-              {/* Content Box */}
-              <div className="flex flex-col flex-1 px-6 py-6 md:px-12 md:py-16 pb-32 md:pb-16">
-                <div className="mb-8 md:mb-10">
+              <div className="flex flex-col flex-1 px-6 py-6 md:px-12 md:py-16 pb-32 md:pb-16 mt-4 sm:mt-0">
+                <div className="mb-8 md:mb-10 pr-12">
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex flex-wrap gap-1.5">
                       {selectedProduct.is_new && (
@@ -816,7 +753,7 @@ export function Marketplace() {
                     <button
                       type="button"
                       onClick={handleShareLink}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#fbfbfd] hover:bg-neutral-100 text-neutral-500 hover:text-black transition-colors border border-black/5 outline-none md:mr-8 shrink-0"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#fbfbfd] hover:bg-neutral-100 text-neutral-500 hover:text-black transition-colors border border-black/5 outline-none shrink-0 cursor-pointer"
                     >
                       {isCopied ? (
                         <Check size={12} strokeWidth={2.5} className="text-green-600" />
@@ -835,7 +772,7 @@ export function Marketplace() {
                     {selectedProduct.collection || 'Core Collection'}
                   </p>
 
-                  <h2 className="text-3xl md:text-4xl font-light tracking-tight leading-snug mb-4 text-black pr-8">
+                  <h2 className="text-3xl md:text-4xl font-light tracking-tight leading-snug mb-4 text-black">
                     {selectedProduct.name}
                   </h2>
 
@@ -868,31 +805,41 @@ export function Marketplace() {
                 </div>
 
                 <div className="mt-auto md:mt-auto pt-4 border-t border-black/5 md:border-none">
-                  {/* Fit Toggle (Only show if canvas_state exists, meaning it's a 3D custom garment) */}
                   {selectedProduct.canvas_state && (
                     <div className="flex justify-between items-center mb-6 border-b border-black/5 pb-6">
-                      <div className="flex items-center bg-[#fbfbfd] border border-black/5 rounded-full p-1 w-full max-w-[240px]">
+                      <div className="flex items-center bg-[#fbfbfd] border border-black/5 rounded-full p-1 w-full max-w-[320px]">
                         <button
                           type="button"
                           onClick={() => setSelectedFit('tshirtman')}
-                          className={`flex-1 py-1.5 text-[9px] uppercase tracking-widest font-bold rounded-full transition-all outline-none ${
+                          className={`flex-1 py-1.5 text-[9px] uppercase tracking-widest font-bold rounded-full transition-all outline-none cursor-pointer ${
                             selectedFit === 'tshirtman'
-                              ? 'bg-white shadow-sm text-black border border-black/5'
-                              : 'text-neutral-400 hover:text-black'
+                              ? 'bg-black text-white shadow-sm font-bold'
+                              : 'text-neutral-400 font-medium hover:text-black'
                           }`}
                         >
-                          Men's Fit
+                          Men's
                         </button>
                         <button
                           type="button"
                           onClick={() => setSelectedFit('tshirtwoman')}
-                          className={`flex-1 py-1.5 text-[9px] uppercase tracking-widest font-bold rounded-full transition-all outline-none ${
+                          className={`flex-1 py-1.5 text-[9px] uppercase tracking-widest font-bold rounded-full transition-all outline-none cursor-pointer ${
                             selectedFit === 'tshirtwoman'
-                              ? 'bg-white shadow-sm text-black border border-black/5'
-                              : 'text-neutral-400 hover:text-black'
+                              ? 'bg-black text-white shadow-sm font-bold'
+                              : 'text-neutral-400 font-medium hover:text-black'
                           }`}
                         >
-                          Women's Fit
+                          Women's
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedFit('tshirtoversized')}
+                          className={`flex-1 py-1.5 text-[9px] uppercase tracking-widest font-bold rounded-full transition-all outline-none cursor-pointer ${
+                            selectedFit === 'tshirtoversized'
+                              ? 'bg-black text-white shadow-sm font-bold'
+                              : 'text-neutral-400 font-medium hover:text-black'
+                          }`}
+                        >
+                          Oversized
                         </button>
                       </div>
                     </div>
@@ -919,7 +866,7 @@ export function Marketplace() {
                           onContextMenu={(e) => handleSizeRightClick(e, size)}
                           onTouchStart={() => handleTouchStart(size)}
                           onTouchEnd={handleTouchEnd}
-                          className={`relative h-14 flex items-center justify-center text-[13px] font-medium transition-all outline-none border-b-2 select-none touch-none ${
+                          className={`relative h-14 flex items-center justify-center text-[13px] font-medium transition-all outline-none border-b-2 select-none touch-none cursor-pointer ${
                             isFocused
                               ? 'border-black text-black bg-neutral-50/50'
                               : 'border-transparent text-neutral-400 hover:text-black hover:border-black/20'
@@ -945,7 +892,8 @@ export function Marketplace() {
                         type="button"
                         onClick={() => updateLocalSize(focusedSize, -1)}
                         disabled={selectedSizes[focusedSize] === 0}
-                        className="hover:opacity-50 disabled:opacity-20 outline-none p-1.5 transition-opacity bg-white rounded-md shadow-sm border border-black/5"
+                        className="hover:opacity-50 disabled:opacity-20 outline-none p-1.5 transition-opacity bg-white rounded-md shadow-sm border border-black/5 cursor-pointer"
+                        aria-label="Decrease quantity"
                       >
                         <Minus size={14} strokeWidth={1.5} />
                       </button>
@@ -955,7 +903,8 @@ export function Marketplace() {
                       <button
                         type="button"
                         onClick={() => updateLocalSize(focusedSize, 1)}
-                        className="hover:opacity-50 outline-none p-1.5 transition-opacity bg-white rounded-md shadow-sm border border-black/5"
+                        className="hover:opacity-50 outline-none p-1.5 transition-opacity bg-white rounded-md shadow-sm border border-black/5 cursor-pointer"
+                        aria-label="Increase quantity"
                       >
                         <Plus size={14} strokeWidth={1.5} />
                       </button>
@@ -966,7 +915,7 @@ export function Marketplace() {
                     type="button"
                     onClick={confirmAddToCart}
                     disabled={totalQty === 0 || isAdding}
-                    className="w-full h-14 bg-black hover:bg-neutral-800 disabled:bg-neutral-100 disabled:text-neutral-400 text-white font-normal uppercase tracking-[0.2em] text-[11px] rounded-full transition-all flex items-center justify-center outline-none shadow-lg"
+                    className="w-full h-14 bg-black hover:bg-neutral-800 disabled:bg-neutral-100 disabled:text-neutral-400 text-white font-normal uppercase tracking-[0.2em] text-[11px] rounded-full transition-all flex items-center justify-center outline-none shadow-lg cursor-pointer"
                   >
                     {isAdding ? (
                       <span className="flex items-center gap-3">
@@ -986,7 +935,6 @@ export function Marketplace() {
         </div>
       )}
 
-      {/* LUXURY GLOBAL HEADER */}
       <header className="h-[70px] bg-white/95 backdrop-blur-md border-b border-black/[0.04] flex items-center justify-between px-5 sm:px-6 lg:px-12 shrink-0 z-40 sticky top-0">
         <Link to="/" className="hover:opacity-60 transition-opacity outline-none">
           <img
@@ -1015,7 +963,7 @@ export function Marketplace() {
             <button
               type="button"
               onClick={openAuthModal}
-              className="text-[10px] font-medium uppercase tracking-[0.15em] text-neutral-500 hover:text-black transition-colors flex items-center outline-none"
+              className="text-[10px] font-medium uppercase tracking-[0.15em] text-neutral-500 hover:text-black transition-colors flex items-center outline-none cursor-pointer"
             >
               Sign In
             </button>
@@ -1037,7 +985,6 @@ export function Marketplace() {
         </div>
       </header>
 
-      {/* STICKY MARKETPLACE NAVIGATION & SEARCH */}
       <div className="w-full bg-white/95 backdrop-blur-md border-b border-black/[0.04] sticky top-[70px] z-30 shadow-[0_4px_20px_rgba(0,0,0,0.02)]">
         <div className="max-w-[1600px] mx-auto px-6 lg:px-12 py-3 sm:py-0 sm:h-14 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-6 overflow-x-auto hide-scrollbar w-full sm:w-auto pb-1 sm:pb-0">
@@ -1046,7 +993,7 @@ export function Marketplace() {
                 key={cat}
                 type="button"
                 onClick={() => setActiveCategory(cat)}
-                className={`text-[10px] uppercase tracking-[0.15em] whitespace-nowrap outline-none transition-colors ${
+                className={`text-[10px] uppercase tracking-[0.15em] whitespace-nowrap outline-none transition-colors cursor-pointer ${
                   activeCategory === cat
                     ? 'font-bold text-black border-b border-black pb-1'
                     : 'font-medium text-neutral-400 hover:text-black'
@@ -1058,37 +1005,10 @@ export function Marketplace() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto mt-2 sm:mt-0 overflow-x-auto hide-scrollbar pb-1 sm:pb-0">
-            {/* Sleek Toggle for Sort */}
-            <div className="flex items-center bg-[#fbfbfd] border border-black/[0.03] p-1 rounded-full shrink-0">
-              <button
-                type="button"
-                onClick={() => setSortBy('trending')}
-                className={`px-3 py-1.5 rounded-full text-[9px] uppercase tracking-[0.15em] transition-all outline-none ${
-                  sortBy === 'trending'
-                    ? 'bg-white text-black shadow-sm font-bold'
-                    : 'text-neutral-400 font-medium hover:text-black'
-                }`}
-              >
-                Trending
-              </button>
-              <button
-                type="button"
-                onClick={() => setSortBy('newest')}
-                className={`px-3 py-1.5 rounded-full text-[9px] uppercase tracking-[0.15em] transition-all outline-none ${
-                  sortBy === 'newest'
-                    ? 'bg-white text-black shadow-sm font-bold'
-                    : 'text-neutral-400 font-medium hover:text-black'
-                }`}
-              >
-                Newest
-              </button>
-            </div>
-
-            {/* Shuffle Button */}
             <button
               type="button"
               onClick={fetchRandomItems}
-              className={`flex items-center justify-center w-8 h-8 rounded-full transition-all outline-none shrink-0 ${
+              className={`flex items-center justify-center w-8 h-8 rounded-full transition-all outline-none shrink-0 cursor-pointer ${
                 isShuffleMode
                   ? 'bg-black text-white shadow-md'
                   : 'bg-[#fbfbfd] border border-black/[0.03] text-black hover:bg-white hover:shadow-sm'
@@ -1098,7 +1018,6 @@ export function Marketplace() {
               <Sparkles size={13} strokeWidth={2} />
             </button>
 
-            {/* Search Bar */}
             <div className="flex items-center gap-3 bg-[#fbfbfd] border border-black/[0.03] px-4 py-2 rounded-full w-full sm:w-56 lg:w-72 focus-within:bg-white focus-within:shadow-sm focus-within:border-black/10 transition-all duration-300">
               <Search size={14} strokeWidth={1.5} className="text-neutral-400 shrink-0" />
               <input
@@ -1113,10 +1032,8 @@ export function Marketplace() {
         </div>
       </div>
 
-      {/* MAIN GRID */}
       <main className="flex-1 overflow-y-auto overflow-x-hidden w-full relative bg-white">
         <div className="max-w-[1600px] mx-auto px-6 lg:px-12 py-10 pb-32">
-          {/* SKELETON LOADING STATE */}
           {isLoading && items.length === 0 ? (
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-4 gap-y-16 sm:gap-x-12 sm:gap-y-24">
               {skeletonKeys.map((key) => (
@@ -1139,14 +1056,13 @@ export function Marketplace() {
                   setSearchQuery('');
                   setActiveCategory('All');
                 }}
-                className="text-[10px] font-medium uppercase tracking-widest text-black border-b border-black outline-none"
+                className="text-[10px] font-medium uppercase tracking-widest text-black border-b border-black outline-none cursor-pointer"
               >
                 Clear Filters
               </button>
             </div>
           ) : (
             <>
-              {/* SPOTLIGHT CAROUSEL - Only on default view */}
               {!isShuffleMode &&
                 activeCategory === 'All' &&
                 !debouncedSearch &&
@@ -1164,6 +1080,7 @@ export function Marketplace() {
                           key={`spotlight-${product.id}`}
                           product={product}
                           onOpen={handleOpenProduct}
+                          selectedFit={selectedFit}
                         />
                       ))}
                     </div>
@@ -1171,18 +1088,17 @@ export function Marketplace() {
                   </div>
                 )}
 
-              {/* MAIN COLLECTION GRID */}
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-4 gap-y-16 sm:gap-x-12 sm:gap-y-24">
                 {items.map((product) => (
                   <ProductCard
                     key={`grid-${product.id}`}
                     product={product}
                     onOpen={handleOpenProduct}
+                    selectedFit={selectedFit}
                   />
                 ))}
               </div>
 
-              {/* INFINITE SCROLL OBSERVER & LOADER */}
               {!isShuffleMode && (
                 <div
                   ref={observerTarget}

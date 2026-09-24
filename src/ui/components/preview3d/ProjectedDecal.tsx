@@ -1,7 +1,7 @@
 import { Decal, Html } from '@react-three/drei';
-import { createPortal, type ThreeEvent, useThree } from '@react-three/fiber';
+import { createPortal, type ThreeEvent } from '@react-three/fiber';
 import { RotateCw, Trash2 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import {
   applyBlur,
@@ -10,9 +10,22 @@ import {
   applyErase,
   applySaturate,
 } from '@/shared/utils/brush-engine';
-import { type DecalData, useEditorStore } from '@/ui/store/editor-store';
+import { useEditorStore } from '@/ui/store/editor-store';
 import { SmartHandle } from './SmartHandle';
 import type { DragState, InteractionMode, PointerCapturable } from './types';
+
+const _raycaster = new THREE.Raycaster();
+const _normalMatrix = new THREE.Matrix3();
+const _worldNormal = new THREE.Vector3();
+const _worldPos = new THREE.Vector3();
+const _targetVec = new THREE.Vector3();
+const _dummyWorld = new THREE.Object3D();
+const _invParent = new THREE.Matrix4();
+const _localMatrix = new THREE.Matrix4();
+const _localPos = new THREE.Vector3();
+const _localQuat = new THREE.Quaternion();
+const _localScale = new THREE.Vector3();
+const _localEuler = new THREE.Euler();
 
 const getThreeBlending = (mode?: string) => {
   switch (mode) {
@@ -32,43 +45,26 @@ const getThreeBlending = (mode?: string) => {
   }
 };
 
-export function ProjectedDecal({
-  decal,
-  targetMeshes,
+export const ProjectedDecal = React.memo(function ProjectedDecal({
+  id,
+  primaryMesh,
   index,
 }: {
-  decal: DecalData;
-  targetMeshes: THREE.Mesh[];
+  id: string;
+  primaryMesh: THREE.Mesh;
   index: number;
 }) {
-  const {
-    selectedIds,
-    setSelectedId,
-    setIsDragging,
-    isDragging,
-    updateDecal,
-    removeDecal,
-    autoSelect,
-    updateText,
-    saveHistory,
-    setContextMenu,
-    setDrawingMode,
-    setEditingDrawingId,
-    globalToolMode,
-    brushSettings,
-  } = useEditorStore();
+  const decal = useEditorStore(useCallback((s) => s.decals.find((d) => d.id === id), [id]));
+  const isSelected = useEditorStore(useCallback((s) => s.selectedIds.includes(id), [id]));
+  const isDragging = useEditorStore((s) => s.isDragging);
 
   const [mode, setMode] = useState<InteractionMode>('idle');
   const [isEditingText, setIsEditingText] = useState(false);
-  const isSelected = selectedIds.includes(decal.id);
 
+  const lastUpdateRef = useRef<number>(0);
   const paintCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const paintCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const isPaintingRef = useRef(false);
-
-  // We use targetMeshes[0] as our mathematical anchor, because all cloned meshes
-  // inside TShirtModel were baked to share the exact same transform origin.
-  const referenceMesh = targetMeshes[0];
 
   useEffect(() => {
     if (!isDragging && mode !== 'idle') {
@@ -86,8 +82,6 @@ export function ProjectedDecal({
     startDistance: 0,
   });
 
-  const { gl, scene } = useThree();
-
   const [texture, setTexture] = useState(() => {
     const t = new THREE.Texture();
     t.generateMipmaps = false;
@@ -104,17 +98,20 @@ export function ProjectedDecal({
     };
   }, [texture]);
 
+  const decalSrc = decal?.src || '';
+  const decalType = decal?.type || 'image';
+
   useEffect(() => {
-    if (isPaintingRef.current) return;
+    if (isPaintingRef.current || !decalSrc) return;
 
     const displayImg = new Image();
     displayImg.crossOrigin = 'anonymous';
-    displayImg.src = decal.src || '';
+    displayImg.src = decalSrc;
     displayImg.onload = () => {
       setTexture((prevTexture) => {
         const newTex = new THREE.Texture(displayImg);
         newTex.colorSpace = THREE.SRGBColorSpace;
-        newTex.anisotropy = gl.capabilities.getMaxAnisotropy();
+        newTex.anisotropy = 2;
         newTex.generateMipmaps = false;
         newTex.minFilter = THREE.LinearFilter;
         newTex.magFilter = THREE.LinearFilter;
@@ -128,17 +125,24 @@ export function ProjectedDecal({
     };
 
     if (
-      decal.type === 'image' ||
-      decal.type === 'drawing' ||
-      decal.type === 'text' ||
-      decal.type === 'shape'
+      decalType === 'image' ||
+      decalType === 'drawing' ||
+      decalType === 'text' ||
+      decalType === 'shape'
     ) {
       const rawImg = new Image();
       rawImg.crossOrigin = 'anonymous';
-      rawImg.src = decal.src || '';
+      rawImg.src = decalSrc;
       rawImg.onload = () => {
-        const w = rawImg.naturalWidth || 512;
-        const h = rawImg.naturalHeight || 512;
+        const MAX_SIZE = 1024;
+        let w = rawImg.naturalWidth || 512;
+        let h = rawImg.naturalHeight || 512;
+
+        if (w > MAX_SIZE || h > MAX_SIZE) {
+          const aspect = Math.min(MAX_SIZE / w, MAX_SIZE / h);
+          w = Math.floor(w * aspect);
+          h = Math.floor(h * aspect);
+        }
 
         if (!paintCanvasRef.current) {
           paintCanvasRef.current = document.createElement('canvas');
@@ -158,13 +162,13 @@ export function ProjectedDecal({
         }
       };
     }
-  }, [decal.src, gl, decal.type]);
+  }, [decalSrc, decalType]);
 
-  const ratio = decal.aspectRatio || 1;
-  let sx = decal.scaleX ?? decal.scale;
-  let sy = decal.scaleY ?? decal.scale;
+  const ratio = decal?.aspectRatio || 1;
+  let sx = decal?.scaleX ?? decal?.scale ?? 0.5;
+  let sy = decal?.scaleY ?? decal?.scale ?? 0.5;
 
-  if (decal.scaleX === undefined && decal.scaleY === undefined) {
+  if (decal?.scaleX === undefined && decal?.scaleY === undefined && decal?.scale) {
     if (ratio > 1) {
       sx = decal.scale * ratio;
       sy = decal.scale;
@@ -180,9 +184,10 @@ export function ProjectedDecal({
   sx = Number.isNaN(sx) ? 0.5 : sx;
   sy = Number.isNaN(sy) ? 0.5 : sy;
 
-  const safeZDepth = Number.isNaN(Number(decal.zDepth))
-    ? 0.04
-    : Math.min(decal.zDepth as number, 1);
+  // FIX: Goldilocks depth! 0.15 is thick enough to fill wrinkles but stops before hitting the back or sides.
+  const safeZDepth = Number.isNaN(Number(decal?.zDepth))
+    ? 0.15
+    : Math.max(Number(decal?.zDepth), 0.1);
 
   const MIN_UI_SIZE = 0.15;
   const uiSx = Math.max(Math.abs(sx || MIN_UI_SIZE), MIN_UI_SIZE);
@@ -190,44 +195,42 @@ export function ProjectedDecal({
   const uiHsX = uiSx / 2;
   const uiHsY = uiSy / 2;
 
-  const { planeGeo, borderGeo } = useMemo(() => {
+  const { borderGeo } = useMemo(() => {
     const plane = new THREE.PlaneGeometry(1, 1);
     const edges = new THREE.EdgesGeometry(plane);
-    return { planeGeo: plane, borderGeo: edges };
+    plane.dispose();
+    return { borderGeo: edges };
   }, []);
 
   useEffect(() => {
     return () => {
-      if (paintCanvasRef.current) {
-        paintCanvasRef.current.width = 0;
-        paintCanvasRef.current.height = 0;
-        paintCanvasRef.current = null;
-        paintCtxRef.current = null;
-      }
-      planeGeo.dispose();
       borderGeo.dispose();
     };
-  }, [planeGeo, borderGeo]);
+  }, [borderGeo]);
+
+  const rawRotation = decal?.rotation || [0, 0, 0];
+  const rawOffset = decal?.rotationOffset || 0;
 
   const finalRotation = useMemo(() => {
     const dummy = new THREE.Object3D();
     dummy.rotation.set(
-      Number.isNaN(decal.rotation[0]) ? 0 : decal.rotation[0],
-      Number.isNaN(decal.rotation[1]) ? 0 : decal.rotation[1],
-      Number.isNaN(decal.rotation[2]) ? 0 : decal.rotation[2],
+      Number.isNaN(rawRotation[0]) ? 0 : rawRotation[0],
+      Number.isNaN(rawRotation[1]) ? 0 : rawRotation[1],
+      Number.isNaN(rawRotation[2]) ? 0 : rawRotation[2],
     );
-    if (decal.rotationOffset) dummy.rotateZ(decal.rotationOffset);
+    if (rawOffset) dummy.rotateZ(rawOffset);
     return [dummy.rotation.x, dummy.rotation.y, dummy.rotation.z] as [number, number, number];
-  }, [decal.rotation, decal.rotationOffset]);
+  }, [rawRotation, rawOffset]);
 
   const handleTextSubmit = (val: string) => {
-    if (val.trim()) updateText(decal.id, val);
+    if (val.trim() && decal) useEditorStore.getState().updateText(decal.id, val);
     setIsEditingText(false);
   };
 
   const handlePaint = (e: ThreeEvent<PointerEvent>) => {
-    if (!paintCtxRef.current || !paintCanvasRef.current) return;
+    if (!paintCtxRef.current || !paintCanvasRef.current || !decal) return;
 
+    const { globalToolMode, brushSettings } = useEditorStore.getState();
     const w = paintCanvasRef.current.width;
     const h = paintCanvasRef.current.height;
 
@@ -256,45 +259,40 @@ export function ProjectedDecal({
     texture.needsUpdate = true;
   };
 
+  if (!decal) return null;
+
   const blendMode = getThreeBlending(decal.blendMode);
-  const isBrushActive = ['fill', 'blur', 'burn', 'saturate', 'erase'].includes(globalToolMode);
 
   return (
     <>
-      {/* MAP OVER ALL TARGET MESHES: 
-          This projects the identical decal across every single disjointed piece of the T-shirt model.
-          The decal geometry naturally crops itself to bounds, creating a perfect seamless effect. */}
-      {targetMeshes.map((mesh) =>
-        createPortal(
-          <Decal
-            key={`decal-${decal.id}-${mesh.uuid}`}
-            mesh={{ current: mesh } as React.RefObject<THREE.Mesh>}
-            position={decal.position}
-            rotation={finalRotation}
-            scale={[sx, sy, safeZDepth]}
-            raycast={() => null}
-            renderOrder={index + 1}
-            castShadow={false}
-            receiveShadow={false}
-          >
-            <meshStandardMaterial
-              map={texture}
-              transparent
-              blending={blendMode}
-              opacity={isEditingText ? 0 : 1}
-              polygonOffset
-              polygonOffsetFactor={-1 - index * 0.5}
-              depthTest={true}
-              depthWrite={false}
-              roughness={0.7}
-              metalness={0.0}
-              color={
-                isSelected && !isEditingText ? new THREE.Color(0xddddff) : new THREE.Color(0xffffff)
-              }
-            />
-          </Decal>,
-          mesh,
-        ),
+      {createPortal(
+        <Decal
+          mesh={{ current: primaryMesh } as React.RefObject<THREE.Mesh>}
+          position={decal.position}
+          rotation={finalRotation}
+          scale={[sx, sy, safeZDepth]}
+          raycast={() => null}
+          renderOrder={index + 1}
+          castShadow={false}
+          receiveShadow={false}
+        >
+          <meshStandardMaterial
+            map={texture}
+            transparent
+            blending={blendMode}
+            opacity={isEditingText ? 0 : 1}
+            polygonOffset
+            polygonOffsetFactor={-1 - index * 0.5}
+            depthTest={true}
+            depthWrite={false}
+            roughness={0.7}
+            metalness={0.0}
+            color={
+              isSelected && !isEditingText ? new THREE.Color(0xddddff) : new THREE.Color(0xffffff)
+            }
+          />
+        </Decal>,
+        primaryMesh,
       )}
 
       {createPortal(
@@ -326,50 +324,62 @@ export function ProjectedDecal({
               castShadow={false}
               receiveShadow={false}
               onContextMenu={(e: ThreeEvent<MouseEvent>) => {
-                if (globalToolMode === 'camera') return;
+                const store = useEditorStore.getState();
+                if (store.globalToolMode === 'camera') return;
                 if (e.nativeEvent && typeof e.nativeEvent.preventDefault === 'function') {
                   e.nativeEvent.preventDefault();
                 }
 
-                if (isEditingText || (!autoSelect && !isSelected) || globalToolMode !== 'default')
+                if (
+                  isEditingText ||
+                  (!store.autoSelect && !isSelected) ||
+                  store.globalToolMode !== 'default'
+                )
                   return;
                 e.stopPropagation();
 
-                if (!selectedIds.includes(decal.id)) setSelectedId(decal.id, false);
-                setContextMenu({
+                if (!store.selectedIds.includes(decal.id)) store.setSelectedId(decal.id, false);
+                store.setContextMenu({
                   x: e.nativeEvent.clientX,
                   y: e.nativeEvent.clientY,
                   decalId: decal.id,
                 });
               }}
               onDoubleClick={(e: ThreeEvent<PointerEvent>) => {
-                if (globalToolMode === 'camera') return;
-                if ((!autoSelect && !isSelected) || globalToolMode !== 'default') return;
+                const store = useEditorStore.getState();
+                if (store.globalToolMode === 'camera') return;
+                if ((!store.autoSelect && !isSelected) || store.globalToolMode !== 'default')
+                  return;
                 e.stopPropagation();
 
                 if (decal.type === 'text') {
                   setIsEditingText(true);
                   setMode('idle');
-                  setIsDragging(false);
+                  store.setIsDragging(false);
                 } else if (decal.type === 'drawing') {
-                  setEditingDrawingId(decal.id);
-                  setDrawingMode(true);
+                  store.setEditingDrawingId(decal.id);
+                  store.setDrawingMode(true);
                   setMode('idle');
-                  setIsDragging(false);
+                  store.setIsDragging(false);
                 }
               }}
               onPointerDown={(e: ThreeEvent<PointerEvent>) => {
-                if (globalToolMode === 'camera') return;
+                const store = useEditorStore.getState();
+                if (store.globalToolMode === 'camera') return;
                 if (isEditingText) return;
                 e.stopPropagation();
                 if (e.button === 2) return;
 
+                const isBrushActive = ['fill', 'blur', 'burn', 'saturate', 'erase'].includes(
+                  store.globalToolMode,
+                );
+
                 if (isBrushActive) {
-                  saveHistory();
-                  if (!selectedIds.includes(decal.id)) setSelectedId(decal.id, false);
+                  store.saveHistory();
+                  if (!store.selectedIds.includes(decal.id)) store.setSelectedId(decal.id, false);
                   isPaintingRef.current = true;
                   document.body.style.cursor = 'crosshair';
-                  setIsDragging(true);
+                  store.setIsDragging(true);
 
                   handlePaint(e);
 
@@ -380,19 +390,18 @@ export function ProjectedDecal({
                   return;
                 }
 
-                if (!autoSelect && !isSelected) return;
+                if (!store.autoSelect && !isSelected) return;
 
-                const state = useEditorStore.getState();
-                if (state.showMarqueeBox) {
-                  state.setShowMarqueeBox(false);
-                  state.setMarqueeStart(null);
-                  state.setMarqueeEnd(null);
+                if (store.showMarqueeBox) {
+                  store.setShowMarqueeBox(false);
+                  store.setMarqueeStart(null);
+                  store.setMarqueeEnd(null);
                 }
 
-                saveHistory();
-                setSelectedId(decal.id, e.shiftKey || e.ctrlKey || e.metaKey);
+                store.saveHistory();
+                store.setSelectedId(decal.id, e.shiftKey || e.ctrlKey || e.metaKey);
                 setMode('drag');
-                setIsDragging(true);
+                store.setIsDragging(true);
                 document.body.style.cursor = 'grabbing';
 
                 const target = e.target as unknown as PointerCapturable;
@@ -401,77 +410,70 @@ export function ProjectedDecal({
                 }
               }}
               onPointerMove={(e: ThreeEvent<PointerEvent>) => {
-                if (globalToolMode === 'camera') return;
+                const store = useEditorStore.getState();
+                if (store.globalToolMode === 'camera') return;
                 e.stopPropagation();
 
+                const isBrushActive = ['fill', 'blur', 'burn', 'saturate', 'erase'].includes(
+                  store.globalToolMode,
+                );
+
                 if (isBrushActive && isPaintingRef.current) {
-                  if (globalToolMode === 'fill') return;
+                  if (store.globalToolMode === 'fill') return;
                   handlePaint(e);
                   return;
                 }
 
                 if (mode === 'drag' && isSelected && !isEditingText) {
-                  const raycaster = new THREE.Raycaster();
-                  raycaster.ray.copy(e.ray);
+                  const now = performance.now();
+                  if (now - lastUpdateRef.current < 32) return;
+                  lastUpdateRef.current = now;
 
-                  // INTERSECT ALL MESHES: Ensures smooth dragging across multi-part clothing
-                  const hits = raycaster.intersectObjects(targetMeshes, false);
+                  _raycaster.ray.copy(e.ray);
+                  const hits = _raycaster.intersectObject(primaryMesh, false);
 
                   if (hits.length > 0) {
                     const hit = hits[0];
-                    const worldPos = hit.point.clone();
-                    const normalMatrix = new THREE.Matrix3().getNormalMatrix(
-                      hit.object.matrixWorld,
-                    );
-                    const worldNormal = hit.face?.normal
-                      ? hit.face.normal.clone().applyMatrix3(normalMatrix).normalize()
-                      : new THREE.Vector3(0, 0, 1);
+                    _worldPos.copy(hit.point);
+                    _normalMatrix.getNormalMatrix(primaryMesh.matrixWorld);
 
-                    const dummyWorld = new THREE.Object3D();
-                    scene.add(dummyWorld);
-                    dummyWorld.position.copy(worldPos);
-
-                    if (Math.abs(worldNormal.y) > 0.999) {
-                      dummyWorld.up.set(0, 0, 1);
+                    if (hit.face?.normal) {
+                      _worldNormal.copy(hit.face.normal).applyMatrix3(_normalMatrix).normalize();
                     } else {
-                      dummyWorld.up.set(0, 1, 0);
+                      _worldNormal.set(0, 0, 1);
                     }
 
-                    dummyWorld.lookAt(worldPos.clone().add(worldNormal));
-                    dummyWorld.updateMatrixWorld(true);
+                    _dummyWorld.position.copy(_worldPos);
+                    if (Math.abs(_worldNormal.y) > 0.999) {
+                      _dummyWorld.up.set(0, 0, 1);
+                    } else {
+                      _dummyWorld.up.set(0, 1, 0);
+                    }
+                    _targetVec.copy(_worldPos).add(_worldNormal);
+                    _dummyWorld.lookAt(_targetVec);
+                    _dummyWorld.updateMatrix();
 
-                    const inverseParentMatrix = new THREE.Matrix4()
-                      .copy(referenceMesh.matrixWorld)
-                      .invert();
-                    const localMatrix = new THREE.Matrix4().multiplyMatrices(
-                      inverseParentMatrix,
-                      dummyWorld.matrixWorld,
-                    );
+                    _invParent.copy(primaryMesh.matrixWorld).invert();
+                    _localMatrix.multiplyMatrices(_invParent, _dummyWorld.matrix);
+                    _localMatrix.decompose(_localPos, _localQuat, _localScale);
+                    _localEuler.setFromQuaternion(_localQuat);
 
-                    const localPos = new THREE.Vector3();
-                    const localQuat = new THREE.Quaternion();
-                    const localScale = new THREE.Vector3();
-                    localMatrix.decompose(localPos, localQuat, localScale);
-                    const localEuler = new THREE.Euler().setFromQuaternion(localQuat);
+                    const deltaX = _localPos.x - decal.position[0];
+                    const deltaY = _localPos.y - decal.position[1];
+                    const deltaZ = _localPos.z - decal.position[2];
 
-                    const state = useEditorStore.getState();
-
-                    const deltaX = localPos.x - decal.position[0];
-                    const deltaY = localPos.y - decal.position[1];
-                    const deltaZ = localPos.z - decal.position[2];
-
-                    state.decals.forEach((d) => {
+                    store.decals.forEach((d) => {
                       if (d.id === decal.id) {
-                        updateDecal(d.id, {
-                          meshName: referenceMesh.name,
-                          position: [localPos.x, localPos.y, localPos.z],
-                          rotation: [localEuler.x, localEuler.y, localEuler.z],
+                        store.updateDecal(d.id, {
+                          meshName: primaryMesh.name,
+                          position: [_localPos.x, _localPos.y, _localPos.z],
+                          rotation: [_localEuler.x, _localEuler.y, _localEuler.z],
                         });
                       } else if (
-                        state.selectedIds.includes(d.id) ||
+                        store.selectedIds.includes(d.id) ||
                         (decal.groupId && d.groupId === decal.groupId)
                       ) {
-                        updateDecal(d.id, {
+                        store.updateDecal(d.id, {
                           position: [
                             d.position[0] + deltaX,
                             d.position[1] + deltaY,
@@ -480,26 +482,29 @@ export function ProjectedDecal({
                         });
                       }
                     });
-
-                    dummyWorld.removeFromParent();
                   }
                 }
               }}
               onPointerUp={(e: ThreeEvent<PointerEvent>) => {
-                if (globalToolMode === 'camera') return;
+                const store = useEditorStore.getState();
+                if (store.globalToolMode === 'camera') return;
                 e.stopPropagation();
+
+                const isBrushActive = ['fill', 'blur', 'burn', 'saturate', 'erase'].includes(
+                  store.globalToolMode,
+                );
 
                 if (isBrushActive && isPaintingRef.current) {
                   isPaintingRef.current = false;
                   document.body.style.cursor = 'crosshair';
-                  setIsDragging(false);
+                  store.setIsDragging(false);
 
                   if (paintCanvasRef.current) {
                     const dataUrl = paintCanvasRef.current.toDataURL('image/png');
                     const newType =
                       decal.type === 'text' || decal.type === 'shape' ? 'drawing' : decal.type;
 
-                    updateDecal(decal.id, {
+                    store.updateDecal(decal.id, {
                       src: dataUrl,
                       originalSrc: dataUrl,
                       type: newType,
@@ -517,7 +522,7 @@ export function ProjectedDecal({
 
                 if (mode === 'drag') {
                   setMode('idle');
-                  setIsDragging(false);
+                  store.setIsDragging(false);
                   document.body.style.cursor = 'grab';
                 }
 
@@ -529,18 +534,20 @@ export function ProjectedDecal({
                 }
               }}
               onPointerOver={(e: ThreeEvent<PointerEvent>) => {
-                if (globalToolMode === 'camera') return;
+                const store = useEditorStore.getState();
+                if (store.globalToolMode === 'camera') return;
                 e.stopPropagation();
-                if (globalToolMode !== 'default' && globalToolMode !== 'select') {
+                if (store.globalToolMode !== 'default' && store.globalToolMode !== 'select') {
                   document.body.style.cursor = 'crosshair';
                 } else if (mode === 'idle' && !isEditingText) {
                   document.body.style.cursor = 'grab';
                 }
               }}
               onPointerOut={(e: ThreeEvent<PointerEvent>) => {
-                if (globalToolMode === 'camera') return;
+                const store = useEditorStore.getState();
+                if (store.globalToolMode === 'camera') return;
                 e.stopPropagation();
-                if (mode === 'idle' && globalToolMode === 'default') {
+                if (mode === 'idle' && store.globalToolMode === 'default') {
                   document.body.style.cursor = 'default';
                 }
               }}
@@ -551,7 +558,7 @@ export function ProjectedDecal({
 
             {isSelected &&
               !isEditingText &&
-              globalToolMode === 'default' &&
+              useEditorStore.getState().globalToolMode === 'default' &&
               !useEditorStore.getState().showMarqueeBox && (
                 <group position={[0, 0, 0.11 + index * 0.002]}>
                   <lineSegments
@@ -565,7 +572,7 @@ export function ProjectedDecal({
                   </lineSegments>
 
                   <SmartHandle
-                    primaryMesh={referenceMesh}
+                    primaryMesh={primaryMesh}
                     position={[-uiHsX, uiHsY, 0]}
                     scaleCursor="nwse-resize"
                     dirX={-1}
@@ -577,7 +584,7 @@ export function ProjectedDecal({
                     dragState={dragState}
                   />
                   <SmartHandle
-                    primaryMesh={referenceMesh}
+                    primaryMesh={primaryMesh}
                     position={[uiHsX, uiHsY, 0]}
                     scaleCursor="nesw-resize"
                     dirX={1}
@@ -589,7 +596,7 @@ export function ProjectedDecal({
                     dragState={dragState}
                   />
                   <SmartHandle
-                    primaryMesh={referenceMesh}
+                    primaryMesh={primaryMesh}
                     position={[-uiHsX, -uiHsY, 0]}
                     scaleCursor="nesw-resize"
                     dirX={-1}
@@ -601,7 +608,7 @@ export function ProjectedDecal({
                     dragState={dragState}
                   />
                   <SmartHandle
-                    primaryMesh={referenceMesh}
+                    primaryMesh={primaryMesh}
                     position={[uiHsX, -uiHsY, 0]}
                     scaleCursor="nwse-resize"
                     dirX={1}
@@ -614,7 +621,7 @@ export function ProjectedDecal({
                   />
 
                   <SmartHandle
-                    primaryMesh={referenceMesh}
+                    primaryMesh={primaryMesh}
                     position={[0, uiHsY, 0]}
                     scaleCursor="ns-resize"
                     dirX={0}
@@ -626,7 +633,7 @@ export function ProjectedDecal({
                     dragState={dragState}
                   />
                   <SmartHandle
-                    primaryMesh={referenceMesh}
+                    primaryMesh={primaryMesh}
                     position={[0, -uiHsY, 0]}
                     scaleCursor="ns-resize"
                     dirX={0}
@@ -638,7 +645,7 @@ export function ProjectedDecal({
                     dragState={dragState}
                   />
                   <SmartHandle
-                    primaryMesh={referenceMesh}
+                    primaryMesh={primaryMesh}
                     position={[uiHsX, 0, 0]}
                     scaleCursor="ew-resize"
                     dirX={1}
@@ -650,7 +657,7 @@ export function ProjectedDecal({
                     dragState={dragState}
                   />
                   <SmartHandle
-                    primaryMesh={referenceMesh}
+                    primaryMesh={primaryMesh}
                     position={[-uiHsX, 0, 0]}
                     scaleCursor="ew-resize"
                     dirX={-1}
@@ -669,8 +676,9 @@ export function ProjectedDecal({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            saveHistory();
-                            updateDecal(decal.id, {
+                            const store = useEditorStore.getState();
+                            store.saveHistory();
+                            store.updateDecal(decal.id, {
                               rotationOffset: (decal.rotationOffset || 0) + Math.PI / 2,
                             });
                           }}
@@ -684,7 +692,7 @@ export function ProjectedDecal({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            removeDecal(decal.id);
+                            useEditorStore.getState().removeDecal(decal.id);
                           }}
                           className="p-2 hover:bg-red-50 text-red-500 rounded-lg transition-colors"
                           title="Delete"
@@ -698,8 +706,8 @@ export function ProjectedDecal({
               )}
           </group>
         </group>,
-        referenceMesh,
+        primaryMesh,
       )}
     </>
   );
-}
+});

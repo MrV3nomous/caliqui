@@ -15,7 +15,8 @@ import {
   Sparkles,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import type React from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { env } from '@/shared/env';
 import { AuthModal } from '@/ui/components/AuthModal';
@@ -301,7 +302,8 @@ function ProductDrawerCarousel({
   );
 }
 
-function ProductCard({
+// PERFORMANCE OPTIMIZATION: Memoize ProductCard to prevent 3D canvas re-renders when parent state updates
+const ProductCard = memo(function ProductCard({
   product,
   onOpen,
   selectedFit,
@@ -377,7 +379,7 @@ function ProductCard({
       </button>
     </div>
   );
-}
+});
 
 export function Marketplace() {
   const { isAuthenticated, openAuthModal } = useAuthStore();
@@ -430,7 +432,6 @@ export function Marketplace() {
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isLongPress = useRef(false);
 
-  // Ref lock to prevent URL and State sync loops
   const isNavigating = useRef(false);
   const drawerMountTime = useRef(0);
 
@@ -472,9 +473,8 @@ export function Marketplace() {
     };
   }, [hasMore, isLoading, isLoadingMore, activeCategory, debouncedSearch, currentPage, fetchItems]);
 
-  // Deep Link Observer with Navigation Lock
   useEffect(() => {
-    if (isNavigating.current) return; // Prevent async router loop
+    if (isNavigating.current) return;
 
     const itemId = searchParams.get('item');
     if (itemId && items.length > 0) {
@@ -540,27 +540,29 @@ export function Marketplace() {
     }
   };
 
-  const handleOpenProduct = (product: MarketplaceItem) => {
-    incrementPopularity(product.id);
-    drawerMountTime.current = Date.now();
+  // PERFORMANCE OPTIMIZATION: useCallback prevents onOpen prop from breaking the memoization of ProductCards
+  const handleOpenProduct = useCallback(
+    (product: MarketplaceItem) => {
+      incrementPopularity(product.id);
+      drawerMountTime.current = Date.now();
 
-    // Enable lock before updating state/URL
-    isNavigating.current = true;
+      isNavigating.current = true;
 
-    setSearchParams({ item: product.id });
-    setSelectedProduct(product);
-    setSelectedSizes({ XS: 0, S: 0, M: 1, L: 0, XL: 0, XXL: 0 });
-    setFocusedSize('M');
-    setSelectedFit(
-      (product.apparel_model as 'tshirtman' | 'tshirtwoman' | 'tshirtoversized') || 'tshirtman',
-    );
-    document.body.style.overflow = 'hidden';
+      setSearchParams({ item: product.id });
+      setSelectedProduct(product);
+      setSelectedSizes({ XS: 0, S: 0, M: 1, L: 0, XL: 0, XXL: 0 });
+      setFocusedSize('M');
+      setSelectedFit(
+        (product.apparel_model as 'tshirtman' | 'tshirtwoman' | 'tshirtoversized') || 'tshirtman',
+      );
+      document.body.style.overflow = 'hidden';
 
-    // Release lock slightly after URL finishes registering
-    setTimeout(() => {
-      isNavigating.current = false;
-    }, 150);
-  };
+      setTimeout(() => {
+        isNavigating.current = false;
+      }, 150);
+    },
+    [incrementPopularity, setSearchParams],
+  );
 
   const handleCloseProduct = () => {
     isNavigating.current = true;

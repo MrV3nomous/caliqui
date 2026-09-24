@@ -139,14 +139,22 @@ export function Toolbar() {
 
   const [aiPrompt, setAiPrompt] = useState('');
   const [replaceTargetId, setReplaceTargetId] = useState<string | null>(null);
+
   const containerRef = useRef<HTMLDivElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null); // Added dedicated ref for the portals
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+
+      const isOutsideContainer = containerRef.current && !containerRef.current.contains(target);
+      const isOutsidePopup = !popupRef.current?.contains(target);
+
+      if (isOutsideContainer && isOutsidePopup) {
         setActivePopup(null);
       }
     };
+
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
@@ -249,7 +257,7 @@ export function Toolbar() {
       {/* ---------------------------------------------------- */}
       {activePopup === 'library' &&
         renderPortal(
-          <div className={`${popupClasses} w-[340px]`}>
+          <div ref={popupRef} className={`${popupClasses} w-[340px]`}>
             <div className="pb-4 mb-4 border-b border-black/[0.04] flex justify-between items-center px-1">
               <span className="text-[10px] font-semibold text-neutral-500 uppercase tracking-[0.2em]">
                 My Assets
@@ -347,7 +355,7 @@ export function Toolbar() {
 
       {activePopup === 'shapes' &&
         renderPortal(
-          <div className={`${popupClasses} w-[300px] md:w-[360px]`}>
+          <div ref={popupRef} className={`${popupClasses} w-[300px] md:w-[360px]`}>
             <div className="pb-4 mb-4 border-b border-black/[0.04] text-[10px] font-semibold text-neutral-500 uppercase tracking-[0.2em] px-1">
               Shape Library
             </div>
@@ -372,7 +380,7 @@ export function Toolbar() {
 
       {activePopup === 'effects' &&
         renderPortal(
-          <div className={`${popupClasses} w-[280px]`}>
+          <div ref={popupRef} className={`${popupClasses} w-[280px]`}>
             <div className="pb-4 mb-4 border-b border-black/[0.04] flex justify-between items-center px-1">
               <span className="text-[10px] font-semibold text-neutral-500 uppercase tracking-[0.2em]">
                 Magic Effects
@@ -411,7 +419,7 @@ export function Toolbar() {
 
       {activePopup === 'camera' &&
         renderPortal(
-          <div className={`${popupClasses} w-[260px]`}>
+          <div ref={popupRef} className={`${popupClasses} w-[260px]`}>
             <div className="pb-4 mb-4 border-b border-black/[0.04] text-[10px] font-semibold text-neutral-500 uppercase tracking-[0.2em] px-1">
               Camera Views
             </div>
@@ -435,7 +443,7 @@ export function Toolbar() {
 
       {activePopup === 'ai' &&
         renderPortal(
-          <div className={`${popupClasses} w-[320px] md:w-[400px]`}>
+          <div ref={popupRef} className={`${popupClasses} w-[320px] md:w-[400px]`}>
             <div className="pb-4 mb-4 border-b border-black/[0.04] text-[10px] font-semibold text-neutral-500 uppercase tracking-[0.2em] px-1 flex items-center gap-2">
               <Sparkles size={14} strokeWidth={1.5} /> AI Studio Assistant
             </div>

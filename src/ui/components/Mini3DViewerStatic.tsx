@@ -1,4 +1,4 @@
-import { Decal, useGLTF, useTexture } from '@react-three/drei';
+import { Bvh, Decal, Environment, Lightformer, useGLTF } from '@react-three/drei';
 import { Canvas, createPortal, useThree } from '@react-three/fiber';
 import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
@@ -6,6 +6,10 @@ import tshirtManUrl from '@/assets/models/tshirtman.glb?url';
 import tshirtoversizedUrl from '@/assets/models/tshirtoversized.glb?url';
 import tshirtWomanUrl from '@/assets/models/tshirtwoman.glb?url';
 import { applyImageFilters, type DecalData, generateAssetTexture } from '@/ui/store/editor-store';
+
+Object.assign(useGLTF, {
+  draco: 'https://www.gstatic.com/draco/versioned/decoders/1.5.5/',
+});
 
 const MODELS: Record<string, string> = {
   tshirtman: tshirtManUrl,
@@ -46,7 +50,6 @@ export function Mini3DViewerStatic({
   const [isInView, setIsInView] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Virtualization: only mount canvas when in or near viewport
   useEffect(() => {
     const observer = new IntersectionObserver(
       ([entry]) => {
@@ -92,16 +95,43 @@ export function Mini3DViewerStatic({
             camera={{ position: [0, 0, 4.5], fov: 45 }}
             className="w-full h-full outline-none"
           >
-            <ambientLight intensity={0.9} />
-            <directionalLight position={[0, 3, 4]} intensity={1.2} />
-            <directionalLight position={[0, 3, -4]} intensity={0.9} />
+            <ambientLight intensity={0.35} />
+            <hemisphereLight intensity={0.25} color="#ffffff" groundColor="#999999" />
+            <directionalLight position={[2, 5, 5]} intensity={0.4} />
+
+            <Environment resolution={256}>
+              <Lightformer
+                form="rect"
+                intensity={0.8}
+                position={[0, 5, 0]}
+                scale={[10, 10, 1]}
+                rotation={[-Math.PI / 2, 0, 0]}
+              />
+              <Lightformer form="rect" intensity={0.4} position={[0, 0, 5]} scale={[10, 10, 1]} />
+              <Lightformer
+                form="rect"
+                intensity={0.8}
+                position={[-5, 0, -5]}
+                scale={[10, 10, 1]}
+                rotation={[0, Math.PI / 4, 0]}
+              />
+              <Lightformer
+                form="rect"
+                intensity={0.8}
+                position={[5, 0, -5]}
+                scale={[10, 10, 1]}
+                rotation={[0, -Math.PI / 4, 0]}
+              />
+            </Environment>
 
             <Suspense fallback={null}>
-              <StaticModel
-                decals={(canvasState || []) as unknown as DecalData[]}
-                color={tshirtColor}
-                apparelModel={apparelModel}
-              />
+              <Bvh firstHitOnly>
+                <StaticModel
+                  decals={(canvasState || []) as unknown as DecalData[]}
+                  color={tshirtColor}
+                  apparelModel={apparelModel}
+                />
+              </Bvh>
             </Suspense>
           </Canvas>
         </div>
@@ -124,7 +154,7 @@ function StaticModel({
   apparelModel: string;
 }) {
   const activeModelUrl = MODELS[apparelModel] || tshirtManUrl;
-  const { scene } = useGLTF(activeModelUrl);
+  const { scene: gltfScene } = useGLTF(activeModelUrl);
   const [hydratedDecals, setHydratedDecals] = useState<DecalData[]>([]);
   const { invalidate } = useThree();
 
@@ -168,68 +198,76 @@ function StaticModel({
     };
   }, [decals, invalidate]);
 
-  const copiedScene = useMemo(() => {
-    const group = new THREE.Group();
-    scene.updateMatrixWorld(true);
-
-    scene.traverse((child) => {
-      if (child instanceof THREE.Mesh && child.geometry) {
-        const clonedMesh = new THREE.Mesh();
-        clonedMesh.geometry = child.geometry.clone();
-        clonedMesh.geometry.applyMatrix4(child.matrixWorld);
-        clonedMesh.geometry.scale(MODEL_SCALE, MODEL_SCALE, MODEL_SCALE);
-        clonedMesh.position.set(0, 0, 0);
-        clonedMesh.rotation.set(0, 0, 0);
-        clonedMesh.scale.set(1, 1, 1);
-        clonedMesh.updateMatrix();
-
-        if (child.material) {
-          clonedMesh.material = child.material.clone();
-        }
-
-        group.add(clonedMesh);
-      }
-    });
-
-    return group;
-  }, [scene]);
-
   const primaryMesh = useMemo<THREE.Mesh | null>(() => {
     let largestMesh: THREE.Mesh | null = null;
-    let maxVolume = -1;
-    copiedScene.traverse((child) => {
+    let maxSurfaceArea = -1;
+    gltfScene.traverse((child) => {
       if (child instanceof THREE.Mesh && child.geometry) {
         if (!child.geometry.boundingBox) child.geometry.computeBoundingBox();
         const box = child.geometry.boundingBox;
         if (box) {
-          const vol = (box.max.x - box.min.x) * (box.max.y - box.min.y) * (box.max.z - box.min.z);
-          if (vol > maxVolume) {
-            maxVolume = vol;
+          const width = box.max.x - box.min.x;
+          const height = box.max.y - box.min.y;
+          const depth = box.max.z - box.min.z;
+          const surfaceArea = 2 * (width * height + height * depth + depth * width);
+
+          if (surfaceArea > maxSurfaceArea) {
+            maxSurfaceArea = surfaceArea;
             largestMesh = child;
           }
         }
       }
     });
-    return largestMesh;
-  }, [copiedScene]);
+
+    if (!largestMesh) return null;
+
+    const baseMesh = largestMesh as THREE.Mesh;
+    const isolatedMesh = new THREE.Mesh();
+    isolatedMesh.geometry = baseMesh.geometry.clone();
+    isolatedMesh.geometry.applyMatrix4(baseMesh.matrixWorld);
+    isolatedMesh.geometry.scale(MODEL_SCALE, MODEL_SCALE, MODEL_SCALE);
+
+    isolatedMesh.position.set(0, 0, 0);
+    isolatedMesh.rotation.set(0, 0, 0);
+    isolatedMesh.scale.set(1, 1, 1);
+    isolatedMesh.updateMatrixWorld(true);
+
+    isolatedMesh.matrixAutoUpdate = true;
+    isolatedMesh.name = baseMesh.name || `mesh_${baseMesh.uuid}`;
+
+    if (baseMesh.material) {
+      isolatedMesh.material = (baseMesh.material as THREE.Material).clone();
+    }
+
+    return isolatedMesh;
+  }, [gltfScene]);
 
   useEffect(() => {
     if (!primaryMesh?.material) return;
-    const mat = primaryMesh.material as THREE.MeshStandardMaterial;
-    if (mat.color && color) {
-      mat.color.set(color);
-      mat.roughness = 0.9;
-      mat.metalness = 0.1;
-      mat.needsUpdate = true;
-      invalidate();
+
+    const applyColor = (mat: THREE.Material) => {
+      if (mat instanceof THREE.MeshStandardMaterial) {
+        mat.color.set(color);
+        mat.roughness = 0.9;
+        mat.metalness = 0.1;
+        mat.needsUpdate = true;
+      }
+    };
+
+    if (Array.isArray(primaryMesh.material)) {
+      primaryMesh.material.forEach(applyColor);
+    } else {
+      applyColor(primaryMesh.material);
     }
+
+    invalidate();
   }, [primaryMesh, color, invalidate]);
 
-  if (!primaryMesh) return <primitive object={copiedScene} />;
+  if (!primaryMesh) return null;
 
   return (
     <group scale={1.1}>
-      <primitive object={copiedScene} />
+      <primitive object={primaryMesh} />
       {hydratedDecals.map((decal, index) => (
         <DecalErrorBoundary key={decal.id || index}>
           <Suspense fallback={null}>
@@ -265,18 +303,66 @@ function SafeTextureStaticDecal({
   mesh: THREE.Mesh;
   index: number;
 }) {
-  const texture = useTexture(src);
-  const { invalidate } = useThree();
+  const { gl, invalidate } = useThree();
+  const [texture, setTexture] = useState(() => {
+    const t = new THREE.Texture();
+    t.generateMipmaps = false;
+    t.minFilter = THREE.LinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    t.wrapS = THREE.ClampToEdgeWrapping;
+    t.wrapT = THREE.ClampToEdgeWrapping;
+    return t;
+  });
 
   useEffect(() => {
-    if (texture) {
-      invalidate();
-    }
-  }, [texture, invalidate]);
+    return () => {
+      texture.dispose();
+    };
+  }, [texture]);
+
+  useEffect(() => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = src;
+    img.onload = () => {
+      const MAX_SIZE = 1024;
+      let w = img.naturalWidth || 512;
+      let h = img.naturalHeight || 512;
+
+      if (w > MAX_SIZE || h > MAX_SIZE) {
+        const aspect = Math.min(MAX_SIZE / w, MAX_SIZE / h);
+        w = Math.floor(w * aspect);
+        h = Math.floor(h * aspect);
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, w, h);
+        setTexture((prev) => {
+          const newTex = new THREE.Texture(canvas);
+          newTex.colorSpace = THREE.SRGBColorSpace;
+          newTex.anisotropy = Math.min(gl.capabilities.getMaxAnisotropy(), 2);
+          newTex.generateMipmaps = false;
+          newTex.minFilter = THREE.LinearFilter;
+          newTex.magFilter = THREE.LinearFilter;
+          newTex.wrapS = THREE.ClampToEdgeWrapping;
+          newTex.wrapT = THREE.ClampToEdgeWrapping;
+          newTex.needsUpdate = true;
+          prev.dispose();
+          invalidate();
+          return newTex;
+        });
+      }
+    };
+  }, [src, gl, invalidate]);
 
   const position = new THREE.Vector3(...(decal.position || [0, 0, 0]));
   const rotation = new THREE.Euler(...(decal.rotation || [0, 0, 0]));
   const ratio = decal.aspectRatio || 1;
+
   let sx = decal.scaleX ?? decal.scale;
   let sy = decal.scaleY ?? decal.scale;
 
@@ -293,8 +379,15 @@ function SafeTextureStaticDecal({
     }
   }
 
-  const safeZDepth = decal.zDepth;
-  const scale = new THREE.Vector3(sx, sy, safeZDepth);
+  const finalSx = Number(sx) || 0.2;
+  const finalSy = Number(sy) || 0.2;
+
+  // FIX: Goldilocks depth constraint applied to static viewer as well.
+  const safeZDepth = Number.isNaN(Number(decal.zDepth))
+    ? 0.15
+    : Math.max(decal.zDepth as number, 0.1);
+
+  const scale = new THREE.Vector3(finalSx, finalSy, safeZDepth);
   const blendMode = decal.blendMode === 'multiply' ? THREE.MultiplyBlending : THREE.NormalBlending;
 
   return createPortal(

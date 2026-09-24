@@ -1,4 +1,4 @@
-import { ArrowRight, ShoppingBag } from 'lucide-react';
+import { ShoppingBag } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 
@@ -72,7 +72,7 @@ export function Home() {
     <div
       ref={scrollRef}
       id="home-scroll-container"
-      className="relative w-full h-[100dvh] overflow-y-auto overflow-x-hidden bg-[#FAFAFA] text-stone-900 font-sans selection:bg-stone-200 custom-scrollbar smooth-scroll"
+      className="relative w-full h-dvh overflow-y-auto overflow-x-hidden bg-[#FAFAFA] text-stone-900 font-sans selection:bg-stone-200 custom-scrollbar smooth-scroll"
     >
       <AuthModal />
 
@@ -93,25 +93,25 @@ export function Home() {
             <div className="flex items-center gap-6 md:gap-10">
               <Link
                 to="/marketplace"
-                className={`text-[10px] font-medium uppercase tracking-[0.15em] transition-opacity duration-500 outline-none hidden sm:block text-white/90 hover:text-white ${scrolled ? 'opacity-0 pointer-events-none absolute' : 'opacity-100 relative'}`}
+                className={`text-[10px] font-medium uppercase tracking-[0.15em] outline-none hidden sm:block text-white/90 hover:text-white ${scrolled ? 'opacity-0 pointer-events-none absolute' : 'opacity-100 relative'}`}
               >
                 Collection
               </Link>
               <Link
                 to="/editor"
-                className={`text-[10px] font-medium uppercase tracking-[0.15em] transition-opacity duration-500 outline-none hidden sm:block text-white/90 hover:text-white ${scrolled ? 'opacity-0 pointer-events-none absolute' : 'opacity-100 relative'}`}
+                className={`text-[10px] font-medium uppercase tracking-[0.15em] outline-none hidden sm:block text-white/90 hover:text-white ${scrolled ? 'opacity-0 pointer-events-none absolute' : 'opacity-100 relative'}`}
               >
                 Studio
               </Link>
 
               <div
-                className={`w-px h-3 mx-2 hidden sm:block transition-opacity duration-500 bg-white/40 ${scrolled ? 'opacity-0 absolute' : 'opacity-100 relative'}`}
+                className={`w-px h-3 mx-2 hidden sm:block bg-white/40 ${scrolled ? 'opacity-0 absolute' : 'opacity-100 relative'}`}
               />
 
               {isAuthenticated ? (
                 <Link
                   to="/dashboard"
-                  className={`text-[10px] font-medium uppercase tracking-[0.15em] transition-opacity duration-500 outline-none text-white/90 hover:text-white ${scrolled ? 'opacity-0 pointer-events-none absolute' : 'opacity-100 relative'}`}
+                  className={`text-[10px] font-medium uppercase tracking-[0.15em] outline-none text-white/90 hover:text-white ${scrolled ? 'opacity-0 pointer-events-none absolute' : 'opacity-100 relative'}`}
                 >
                   Account
                 </Link>
@@ -119,7 +119,7 @@ export function Home() {
                 <button
                   type="button"
                   onClick={openAuthModal}
-                  className={`text-[10px] font-medium uppercase tracking-[0.15em] transition-opacity duration-500 outline-none text-white/90 hover:text-white ${scrolled ? 'opacity-0 pointer-events-none absolute' : 'opacity-100 relative'}`}
+                  className={`text-[10px] font-medium uppercase tracking-[0.15em] outline-none text-white/90 hover:text-white ${scrolled ? 'opacity-0 pointer-events-none absolute' : 'opacity-100 relative'}`}
                 >
                   Sign In
                 </button>
@@ -128,7 +128,9 @@ export function Home() {
               <Link
                 to="/checkout"
                 aria-label="Shopping Bag"
-                className={`relative flex items-center justify-center p-1 transition-transform duration-300 outline-none hover:scale-105 ${scrolled ? 'text-stone-900 hover:opacity-60' : 'text-white'}`}
+                className={`relative flex items-center justify-center p-1 transition-all duration-300 outline-none hover:scale-105 ${
+                  scrolled ? 'text-stone-900 hover:opacity-60' : 'text-white'
+                }`}
               >
                 <ShoppingBag size={18} strokeWidth={1.2} />
                 {totalCartItems > 0 && (
@@ -145,7 +147,7 @@ export function Home() {
       </div>
 
       {/* 1. HERO */}
-      <section className="relative w-full h-[100dvh] bg-stone-950 flex flex-col items-center justify-center overflow-hidden">
+      <section className="relative w-full h-dvh bg-stone-950 flex flex-col items-center justify-center overflow-hidden">
         <div className="absolute inset-0 w-full h-full">
           <video
             autoPlay
@@ -159,14 +161,14 @@ export function Home() {
           </video>
         </div>
 
-        <div className="absolute inset-0 bg-stone-950/40 pointer-events-none" />
+        <div className="absolute inset-0 bg-stone-950/25 pointer-events-none" />
 
         <div className="relative z-10 max-w-5xl w-full px-6 flex flex-col items-center text-center">
           <h1 className="text-4xl md:text-6xl lg:text-7xl font-light tracking-tight text-white leading-[1.1] mb-12">
             <span className="block animate-in fade-in slide-in-from-bottom-4 duration-1000 ease-out fill-mode-both delay-300">
               Imagine it.
             </span>
-            <span className="block animate-in fade-in slide-in-from-bottom-4 duration-1000 ease-out fill-mode-both delay-500 text-stone-300 mt-2">
+            <span className="block animate-in fade-in slide-in-from-bottom-4 duration-1000 ease-out fill-mode-both delay-500 text-white mt-2">
               Wear it.
             </span>
           </h1>
@@ -208,7 +210,7 @@ export function Home() {
                 key={item.id}
                 className="group relative outline-none flex flex-col items-center pb-2"
               >
-                <div className="w-full aspect-[3/4] bg-stone-100 overflow-hidden relative mb-4">
+                <div className="w-full aspect-3/4 bg-stone-100 overflow-hidden relative mb-4">
                   <img
                     src={item.lifestyleImg}
                     alt={item.title}
@@ -219,7 +221,7 @@ export function Home() {
                     src={item.detailImg}
                     alt={`${item.title} detail`}
                     loading="lazy"
-                    className="absolute inset-0 w-full h-full object-cover opacity-0 scale-105 transition-all duration-[1s] ease-out group-hover:opacity-100 group-hover:scale-100"
+                    className="absolute inset-0 w-full h-full object-cover opacity-0 scale-105 transition-all duration-1000 ease-out group-hover:opacity-100 group-hover:scale-100"
                   />
                 </div>
 
@@ -233,7 +235,7 @@ export function Home() {
       </section>
 
       {/* 3. MADE BY YOU */}
-      <section className="py-20 md:py-32 px-6 lg:px-12 bg-white flex flex-col items-center border-t border-stone-100">
+      <section className="py-20 md:py-24 px-6 lg:px-12 bg-[#FAFAFA] flex flex-col items-center">
         <h2 className="text-3xl md:text-5xl font-light tracking-tight text-stone-900 leading-[1.2] text-center mb-16 md:mb-20 max-w-3xl">
           What if you could wear <br className="hidden md:block" />
           <span className="text-stone-500">the idea in your head?</span>
@@ -242,7 +244,7 @@ export function Home() {
         <div className="max-w-[1600px] w-full mx-auto">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 lg:gap-8 mb-16">
             <div className="flex flex-col group">
-              <div className="aspect-[4/5] bg-stone-50 overflow-hidden relative">
+              <div className="aspect-4/5 bg-stone-50 overflow-hidden relative">
                 <img
                   src={studioIdea}
                   className="absolute inset-0 w-full h-full object-cover grayscale opacity-80 transition-all duration-700 group-hover:grayscale-0 group-hover:opacity-100"
@@ -253,7 +255,7 @@ export function Home() {
             </div>
 
             <div className="flex flex-col group md:mt-8">
-              <div className="aspect-[4/5] bg-stone-50 overflow-hidden relative">
+              <div className="aspect-4/5 bg-stone-50 overflow-hidden relative">
                 <img
                   src={studioInterface}
                   className="absolute inset-0 w-full h-full object-cover opacity-90 transition-all duration-700 group-hover:opacity-100"
@@ -264,7 +266,7 @@ export function Home() {
             </div>
 
             <div className="flex flex-col group md:mt-16">
-              <div className="aspect-[4/5] bg-stone-50 overflow-hidden relative">
+              <div className="aspect-4/5 bg-stone-50 overflow-hidden relative">
                 <img
                   src={studioProduction}
                   className="absolute inset-0 w-full h-full object-cover opacity-90 transition-all duration-700 group-hover:opacity-100"
@@ -275,7 +277,7 @@ export function Home() {
             </div>
 
             <div className="flex flex-col group md:mt-24">
-              <div className="aspect-[4/5] bg-stone-50 overflow-hidden relative">
+              <div className="aspect-4/5 bg-stone-50 overflow-hidden relative">
                 <img
                   src={studioFinal}
                   className="absolute inset-0 w-full h-full object-cover opacity-90 transition-all duration-700 group-hover:opacity-100"
@@ -285,86 +287,79 @@ export function Home() {
               </div>
             </div>
           </div>
-
-          <div className="flex justify-center">
-            <Link
-              to="/editor"
-              className="group inline-flex items-center gap-3 font-medium text-[10px] uppercase tracking-[0.15em] text-stone-900 transition-colors border-b border-stone-200 hover:border-stone-900 pb-1 outline-none"
-            >
-              Enter The Studio
-              <ArrowRight
-                size={14}
-                strokeWidth={1.5}
-                className="transition-transform duration-300 ease-out group-hover:translate-x-1 text-stone-500 group-hover:text-stone-900"
-              />
-            </Link>
-          </div>
         </div>
       </section>
 
       {/* 4. INDIVIDUALITY STATEMENT */}
-      <section className="relative w-full py-32 md:py-48 overflow-hidden bg-[#FAFAFA] flex flex-col items-center justify-center border-t border-stone-100">
+      <section className="relative w-full min-h-[80vh] py-28 md:py-40 overflow-hidden bg-[#FAFAFA] flex flex-col items-center justify-center">
         <style>{`
-          @media (prefers-reduced-motion: no-preference) {
-            @keyframes slowfade {
-              0%, 25% { opacity: 1; transform: scale(1); }
-              33%, 92% { opacity: 0; transform: scale(1.02); }
-              100% { opacity: 1; transform: scale(1); }
-            }
-            .bg-slow-1 { animation: slowfade 36s infinite ease-in-out; }
-            .bg-slow-2 { animation: slowfade 36s infinite ease-in-out; animation-delay: 12s; opacity: 0; }
-            .bg-slow-3 { animation: slowfade 36s infinite ease-in-out; animation-delay: 24s; opacity: 0; }
-          }
-          @media (prefers-reduced-motion: reduce) {
-            .bg-slow-2, .bg-slow-3 { display: none; }
-          }
-        `}</style>
+    @media (prefers-reduced-motion: no-preference) {
+      @keyframes slowfade {
+        0%, 25% { opacity: 1; transform: scale(1); }
+        33%, 92% { opacity: 0; transform: scale(1.02); }
+        100% { opacity: 1; transform: scale(1); }
+      }
+
+      .bg-slow-1 {
+        animation: slowfade 36s infinite ease-in-out;
+      }
+
+      .bg-slow-2 {
+        animation: slowfade 36s infinite ease-in-out;
+        animation-delay: 12s;
+        opacity: 0;
+      }
+
+      .bg-slow-3 {
+        animation: slowfade 36s infinite ease-in-out;
+        animation-delay: 24s;
+        opacity: 0;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .bg-slow-2,
+      .bg-slow-3 {
+        display: none;
+      }
+    }
+  `}</style>
 
         <div className="absolute inset-0 w-full h-full pointer-events-none">
           <img
             src={indivBg1}
-            className="absolute inset-0 w-full h-full object-cover bg-slow-1 opacity-10"
+            className="absolute inset-0 w-full h-full object-cover bg-slow-1 opacity-[0.06]"
             alt=""
           />
+
           <img
             src={indivBg2}
-            className="absolute inset-0 w-full h-full object-cover bg-slow-2 opacity-10"
+            className="absolute inset-0 w-full h-full object-cover bg-slow-2 opacity-[0.06]"
             alt=""
           />
+
           <img
             src={indivBg3}
-            className="absolute inset-0 w-full h-full object-cover bg-slow-3 opacity-10"
+            className="absolute inset-0 w-full h-full object-cover bg-slow-3 opacity-[0.06]"
             alt=""
           />
+
+          <div className="absolute inset-0 bg-[#FAFAFA]/65" />
         </div>
 
         <div className="relative z-10 text-center px-6">
-          <h2 className="text-3xl md:text-5xl lg:text-6xl font-light text-white tracking-tight leading-[1.2] max-w-4xl mx-auto uppercase">
+          <h2 className="text-3xl md:text-5xl lg:text-6xl font-light text-stone-950 tracking-tight leading-[1.2] max-w-4xl mx-auto uppercase">
             There is no Caliqui look.
           </h2>
-          <p className="text-2xl md:text-4xl lg:text-5xl font-light text-stone-400 mt-4 uppercase">
+
+          <p className="text-2xl md:text-4xl lg:text-5xl font-serif italic text-stone-700 mt-4">
             There is yours.
           </p>
         </div>
       </section>
 
       {/* 5. FOOTER */}
-      <footer className="py-12 md:py-16 px-6 lg:px-12 bg-white flex flex-col items-center justify-center text-center space-y-8 border-t border-stone-100">
-        <div className="flex items-center gap-8 md:gap-12">
-          <Link
-            to="/marketplace"
-            className="text-[10px] font-medium uppercase tracking-[0.15em] text-stone-500 hover:text-stone-900 transition-colors"
-          >
-            Collection
-          </Link>
-          <Link
-            to="/editor"
-            className="text-[10px] font-medium uppercase tracking-[0.15em] text-stone-500 hover:text-stone-900 transition-colors"
-          >
-            Studio
-          </Link>
-        </div>
-
+      <footer className="py-12 md:py-16 px-6 lg:px-12 bg-[#FAFAFA] flex flex-col items-center justify-center text-center space-y-8">
         <div className="flex flex-col items-center gap-3 pt-4">
           <img
             src="/logo.png"

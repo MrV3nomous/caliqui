@@ -1,4 +1,4 @@
-import { ContactShadows, Environment, OrbitControls } from '@react-three/drei';
+import { Bvh, ContactShadows, Environment, Lightformer, OrbitControls } from '@react-three/drei';
 import { Canvas, useFrame } from '@react-three/fiber';
 import React, { useRef } from 'react';
 import * as THREE from 'three';
@@ -20,10 +20,8 @@ function CameraAnimator({
 }: {
   controlsRef: React.RefObject<OrbitControlsImpl | null>;
 }) {
-  const cameraView = useEditorStore((state) => state.cameraView);
-  const setCameraView = useEditorStore((state) => state.setCameraView);
-
   useFrame(() => {
+    const { cameraView, setCameraView } = useEditorStore.getState();
     if (!controlsRef.current || cameraView === 'custom') return;
     const targetSpherical = CAMERA_POSITIONS[cameraView];
     if (!targetSpherical) return;
@@ -44,19 +42,50 @@ function CameraAnimator({
   return null;
 }
 
+function StoreBoundOrbitControls({
+  controlsRef,
+}: {
+  controlsRef: React.RefObject<OrbitControlsImpl | null>;
+}) {
+  const isDragging = useEditorStore((s) => s.isDragging);
+  const isDrawingMode = useEditorStore((s) => s.isDrawingMode);
+  const globalToolMode = useEditorStore((s) => s.globalToolMode);
+
+  return (
+    <OrbitControls
+      ref={controlsRef}
+      makeDefault
+      minPolarAngle={0}
+      maxPolarAngle={Math.PI}
+      enablePan={true}
+      enableZoom={true}
+      mouseButtons={{
+        LEFT: THREE.MOUSE.ROTATE,
+        MIDDLE: THREE.MOUSE.DOLLY,
+        RIGHT: THREE.MOUSE.PAN,
+      }}
+      enabled={!isDragging && !isDrawingMode && globalToolMode === 'camera'}
+    />
+  );
+}
+
 export function Preview3D() {
-  const { isDragging, setIsDragging, isDrawingMode, globalToolMode, setCameraView } =
-    useEditorStore();
+  const setIsDragging = useEditorStore((s) => s.setIsDragging);
+  const setCameraView = useEditorStore((s) => s.setCameraView);
   const controlsRef = useRef<OrbitControlsImpl>(null);
 
   return (
     <div className="absolute inset-0 w-full h-full touch-none bg-transparent pointer-events-none">
-      {/* Enable pointer events ONLY on the canvas */}
       <div className="absolute inset-0 pointer-events-auto">
         <Canvas
           id="tshirt-canvas"
           dpr={[1, 1.5]}
-          gl={{ preserveDrawingBuffer: true, powerPreference: 'high-performance', alpha: true }}
+          gl={{
+            preserveDrawingBuffer: false,
+            powerPreference: 'high-performance',
+            alpha: true,
+            antialias: true,
+          }}
           camera={{ position: [0, 0, 4.5], fov: 45 }}
           onPointerDown={() => setCameraView('custom')}
           onPointerUp={() => {
@@ -72,17 +101,52 @@ export function Preview3D() {
             }
           }}
         >
-          <ambientLight intensity={0.6} />
-          <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} intensity={1} castShadow />
-          <Environment preset="city" />
+          {/* 1. Base Lighting: Softened to allow shadows to exist in the wrinkles */}
+          <ambientLight intensity={0.95} />
+          <hemisphereLight intensity={0.75} color="#ffffff" groundColor="#999999" />
 
-          <React.Suspense fallback={null}>
-            <TShirtModel />
-          </React.Suspense>
+          {/* 2. Main Light: Shifted off-center (X: 2) to cast nice, subtle shadows across the folds */}
+          <directionalLight position={[2, 5, 5]} intensity={0.9} />
+
+          {/* 3. Environment: Intensities drastically reduced to stop "blowing out" the white fabric */}
+          <Environment resolution={256}>
+            {/* Soft top lighting */}
+            <Lightformer
+              form="rect"
+              intensity={0.8}
+              position={[0, 5, 0]}
+              scale={[10, 10, 1]}
+              rotation={[-Math.PI / 2, 0, 0]}
+            />
+            {/* Very subtle front fill */}
+            <Lightformer form="rect" intensity={0.4} position={[0, 0, 5]} scale={[10, 10, 1]} />
+            {/* Rim lights to separate the shirt from the white background */}
+            <Lightformer
+              form="rect"
+              intensity={0.8}
+              position={[-5, 0, -5]}
+              scale={[10, 10, 1]}
+              rotation={[0, Math.PI / 4, 0]}
+            />
+            <Lightformer
+              form="rect"
+              intensity={0.8}
+              position={[5, 0, -5]}
+              scale={[10, 10, 1]}
+              rotation={[0, -Math.PI / 4, 0]}
+            />
+          </Environment>
+
+          <Bvh firstHitOnly>
+            <React.Suspense fallback={null}>
+              <TShirtModel />
+            </React.Suspense>
+          </Bvh>
 
           <ContactShadows
+            frames={1}
             position={[0, -1.0, 0]}
-            opacity={0.2}
+            opacity={0.25}
             scale={10}
             blur={2.5}
             far={4}
@@ -90,23 +154,7 @@ export function Preview3D() {
           />
           <MarqueeEngine />
           <CameraAnimator controlsRef={controlsRef} />
-
-          <OrbitControls
-            ref={controlsRef}
-            makeDefault
-            minPolarAngle={0}
-            maxPolarAngle={Math.PI}
-            enablePan={true}
-            enableZoom={true}
-            mouseButtons={{
-              LEFT: THREE.MOUSE.ROTATE,
-              MIDDLE: THREE.MOUSE.DOLLY,
-              RIGHT: THREE.MOUSE.PAN,
-            }}
-            // ABSOLUTE PRIORITY: OrbitControls is completely disabled during Edit Mode.
-            // It is only enabled when the user clicks the "Move" tool.
-            enabled={!isDragging && !isDrawingMode && globalToolMode === 'camera'}
-          />
+          <StoreBoundOrbitControls controlsRef={controlsRef} />
         </Canvas>
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { Loader2, RotateCcw, Sparkles } from 'lucide-react';
+import { Box, Copy, Layers, Loader2, RotateCcw, Sparkles } from 'lucide-react';
 import type React from 'react';
 import { useState } from 'react';
 import { ColorPicker } from '@/ui/components/ColorPicker';
@@ -25,6 +25,7 @@ function SliderControl({
 }) {
   const isRotation = prop.id === 'rotationOffset';
   const isScale = prop.id === 'scale';
+  const isDepth = prop.id === 'zDepth';
 
   const rawValue = isScale
     ? (activeDecal.scaleX ?? activeDecal.scale)
@@ -37,6 +38,8 @@ function SliderControl({
     calculatedDisplay = Math.round(effectiveValue * (180 / Math.PI));
   } else if (isScale) {
     calculatedDisplay = Math.round(effectiveValue * 100);
+  } else if (isDepth) {
+    calculatedDisplay = Number(Number(effectiveValue).toFixed(2));
   } else {
     calculatedDisplay = Number(Number(effectiveValue).toFixed(2));
   }
@@ -49,7 +52,7 @@ function SliderControl({
     if (Number.isNaN(num)) return;
 
     if (prop.min !== undefined) num = Math.max(prop.min, num);
-    if (prop.max !== undefined) num = Math.min(prop.max, num);
+    if (prop.max !== undefined) num = Math.max(prop.max, num);
 
     let storeNum = num;
     if (isRotation) storeNum = num * (Math.PI / 180);
@@ -210,6 +213,7 @@ export function PropertiesPanel({ activeDecalId }: { activeDecalId: string }) {
       'scaleY',
       'rotationOffset',
       'zDepth',
+      'placementMode',
     ];
     const needsRedraw = Object.keys(updates).some((key) => !nonRedrawProps.includes(key));
     if (!needsRedraw) return;
@@ -333,6 +337,74 @@ export function PropertiesPanel({ activeDecalId }: { activeDecalId: string }) {
 
   return (
     <div className="flex flex-col gap-8 pt-4 pb-6">
+      {/* 3-Mode Selector */}
+      <div className="space-y-3 min-w-0">
+        <Label className="text-[9px] font-medium text-neutral-400 uppercase tracking-[0.2em] block m-0">
+          Placement Mode
+        </Label>
+        <div className="flex bg-white border border-black/[0.04] p-1.5 rounded-2xl justify-between gap-1 overflow-hidden">
+          <button
+            type="button"
+            className={`flex-1 flex justify-center items-center gap-1.5 text-[9px] py-2.5 rounded-xl transition-all outline-none min-w-0 ${
+              !activeDecal.placementMode ||
+              activeDecal.placementMode === 'front' ||
+              activeDecal.placementMode === 'back'
+                ? 'bg-[#fbfbfd] shadow-sm text-black font-bold border border-black/5 tracking-wider uppercase'
+                : 'text-neutral-400 hover:text-black font-medium tracking-wider uppercase'
+            }`}
+            onClick={() => {
+              if (activeDecal.placementMode === 'front' || activeDecal.placementMode === 'back')
+                return;
+              saveHistory();
+              // Only reset 3D coords if coming from Wrap mode so the camera can resnap it
+              const needsReSnap = activeDecal.placementMode === 'wrap';
+              updateVisuals({
+                placementMode: 'front',
+                ...(needsReSnap ? { position: [0, 0, 0], rotation: [0, 0, 0] } : {}),
+              });
+            }}
+          >
+            <Box size={12} /> Front/Back
+          </button>
+
+          <button
+            type="button"
+            className={`flex-1 flex justify-center items-center gap-1.5 text-[9px] py-2.5 rounded-xl transition-all outline-none min-w-0 ${
+              activeDecal.placementMode === 'pass-through'
+                ? 'bg-[#fbfbfd] shadow-sm text-black font-bold border border-black/5 tracking-wider uppercase'
+                : 'text-neutral-400 hover:text-black font-medium tracking-wider uppercase'
+            }`}
+            onClick={() => {
+              if (activeDecal.placementMode === 'pass-through') return;
+              saveHistory();
+              const needsReSnap = activeDecal.placementMode === 'wrap';
+              updateVisuals({
+                placementMode: 'pass-through',
+                ...(needsReSnap ? { position: [0, 0, 0], rotation: [0, 0, 0] } : {}),
+              });
+            }}
+          >
+            <Copy size={12} /> Both Sides
+          </button>
+
+          <button
+            type="button"
+            className={`flex-1 flex justify-center items-center gap-1.5 text-[9px] py-2.5 rounded-xl transition-all outline-none min-w-0 ${
+              activeDecal.placementMode === 'wrap'
+                ? 'bg-[#fbfbfd] shadow-sm text-black font-bold border border-black/5 tracking-wider uppercase'
+                : 'text-neutral-400 hover:text-black font-medium tracking-wider uppercase'
+            }`}
+            onClick={() => {
+              if (activeDecal.placementMode === 'wrap') return;
+              saveHistory();
+              updateVisuals({ placementMode: 'wrap', scale: 1.0, rotation: [0, 0, 0] });
+            }}
+          >
+            <Layers size={12} /> 360° Wrap
+          </button>
+        </div>
+      </div>
+
       {isImageOrDrawing && (
         <button
           type="button"
@@ -380,38 +452,40 @@ export function PropertiesPanel({ activeDecalId }: { activeDecalId: string }) {
         </div>
       )}
 
-      {/* Z-Depth Restricted Controller */}
-      <div className="space-y-4 min-w-0">
-        <div className="flex items-center justify-between pr-1 border-b border-black/[0.02] pb-2">
-          <h4 className="text-[10px] font-medium text-neutral-500 uppercase tracking-[0.25em] pl-1">
-            3D Projection
-          </h4>
-          <button
-            type="button"
-            onClick={() => {
-              saveHistory();
-              updateVisuals({ zDepth: defaults.zDepth ?? 0.04 });
+      {/* Z-Depth Free Controller (Hidden when in Full Wrap mode) */}
+      {activeDecal.placementMode !== 'wrap' && (
+        <div className="space-y-4 min-w-0">
+          <div className="flex items-center justify-between pr-1 border-b border-black/[0.02] pb-2">
+            <h4 className="text-[10px] font-medium text-neutral-500 uppercase tracking-[0.25em] pl-1">
+              3D Projection
+            </h4>
+            <button
+              type="button"
+              onClick={() => {
+                saveHistory();
+                updateVisuals({ zDepth: defaults.zDepth ?? 0.15 });
+              }}
+              className="text-neutral-400 hover:text-black transition-colors outline-none"
+              title="Reset Z-Depth"
+            >
+              <RotateCcw size={12} strokeWidth={1.5} />
+            </button>
+          </div>
+          <SliderControl
+            prop={{
+              id: 'zDepth',
+              label: 'Z-Depth (Volume & Curve Wrap)',
+              type: 'slider',
+              min: 0.01,
+              max: 5.0, // Restored absolute freedom up to 5.0 without logic checks
+              step: 0.01,
             }}
-            className="text-neutral-400 hover:text-black transition-colors outline-none"
-            title="Reset Z-Depth"
-          >
-            <RotateCcw size={12} strokeWidth={1.5} />
-          </button>
+            activeDecal={activeDecal}
+            updateVisuals={updateVisuals}
+            saveHistory={saveHistory}
+          />
         </div>
-        <SliderControl
-          prop={{
-            id: 'zDepth',
-            label: 'Z-Depth (Bleed Control)',
-            type: 'slider',
-            min: 0.01,
-            max: 1,
-            step: 0.01,
-          }}
-          activeDecal={activeDecal}
-          updateVisuals={updateVisuals}
-          saveHistory={saveHistory}
-        />
-      </div>
+      )}
 
       {activeConfigGroups.map((group) => (
         <div key={group.id} className="space-y-4 min-w-0">

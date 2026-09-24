@@ -19,6 +19,9 @@ export type CameraView = 'front' | 'back' | 'left' | 'right' | 'top' | 'custom';
 
 export type ApparelModelType = 'tshirtman' | 'tshirtwoman' | 'tshirtoversized';
 
+// NEW: Strict placement control types
+export type PlacementModeType = 'front' | 'back' | 'pass-through' | 'wrap';
+
 export interface BrushSettings {
   size: number;
   color: string;
@@ -71,6 +74,9 @@ export interface DecalData {
   groupId?: string;
 
   aspectRatio?: number;
+
+  // NEW: The core architectural control property
+  placementMode?: PlacementModeType;
 
   text?: string;
   fill?: string;
@@ -705,9 +711,10 @@ export const getDefaultConfig = (_type: ToolType): Partial<DecalData> => ({
   squeezeX: 1,
   squeezeY: 1,
   scale: 0.2,
-  zDepth: 0.15, // Fixed safety Z-depth constraint to prevent decals bleeding to the back
+  zDepth: 0.5,
   rotationOffset: 0,
   aspectRatio: 1,
+  placementMode: 'front', // Defaults to strict isolation
 });
 
 // Helper function to convert base64 data: URL to a Blob

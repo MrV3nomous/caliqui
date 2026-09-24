@@ -1,5 +1,5 @@
 import { Decal, Html } from '@react-three/drei';
-import { createPortal, type ThreeEvent } from '@react-three/fiber';
+import { createPortal, type ThreeEvent, useThree } from '@react-three/fiber';
 import { RotateCw, Trash2 } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
@@ -47,11 +47,11 @@ const getThreeBlending = (mode?: string) => {
 
 export const ProjectedDecal = React.memo(function ProjectedDecal({
   id,
-  primaryMesh,
+  targetMeshes,
   index,
 }: {
   id: string;
-  primaryMesh: THREE.Mesh;
+  targetMeshes: THREE.Mesh[];
   index: number;
 }) {
   const decal = useEditorStore(useCallback((s) => s.decals.find((d) => d.id === id), [id]));
@@ -65,6 +65,21 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
   const paintCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const paintCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const isPaintingRef = useRef(false);
+
+  const { gl } = useThree();
+
+  // FIX 1: Synchronously enable clipping so the material compiles perfectly on Frame 1
+  if (!gl.localClippingEnabled) {
+    gl.localClippingEnabled = true;
+  }
+
+  const activeMesh = useMemo(() => {
+    return (
+      targetMeshes.find((m) => m.name === decal?.meshName) ||
+      targetMeshes.find((m) => m.name.toLowerCase().includes('front')) ||
+      targetMeshes[0]
+    );
+  }, [targetMeshes, decal?.meshName]);
 
   useEffect(() => {
     if (!isDragging && mode !== 'idle') {
@@ -184,10 +199,18 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
   sx = Number.isNaN(sx) ? 0.5 : sx;
   sy = Number.isNaN(sy) ? 0.5 : sy;
 
-  // FIX: Goldilocks depth! 0.15 is thick enough to fill wrinkles but stops before hitting the back or sides.
+  const isPassThrough = decal?.placementMode === 'pass-through';
+  const isFront = decal?.position ? decal.position[2] >= 0 : true;
+
+  // FIX 2: Added a 0.01 tolerance buffer to completely eliminate mathematically perfect Z-fighting
+  const clipPlane = useMemo(() => {
+    if (isPassThrough) return null;
+    return new THREE.Plane(new THREE.Vector3(0, 0, isFront ? 1 : -1), 0.01);
+  }, [isPassThrough, isFront]);
+
   const safeZDepth = Number.isNaN(Number(decal?.zDepth))
     ? 0.15
-    : Math.max(Number(decal?.zDepth), 0.1);
+    : Math.max(Number(decal?.zDepth), 0.01);
 
   const MIN_UI_SIZE = 0.15;
   const uiSx = Math.max(Math.abs(sx || MIN_UI_SIZE), MIN_UI_SIZE);
@@ -259,41 +282,65 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
     texture.needsUpdate = true;
   };
 
-  if (!decal) return null;
+  if (!decal || decal.placementMode === 'wrap') return null;
 
   const blendMode = getThreeBlending(decal.blendMode);
 
+  // FIX 3: Dynamic key forces R3F to safely remount the material when switching modes, stopping invisible state lock
+  const renderMaterial = () => (
+    <meshStandardMaterial
+      key={`mat-${isPassThrough ? 'pass' : 'clip'}-${isFront ? 'front' : 'back'}`}
+      map={texture}
+      transparent
+      blending={blendMode}
+      opacity={isEditingText ? 0 : 1}
+      polygonOffset
+      polygonOffsetFactor={-1 - index * 0.5}
+      depthTest={true}
+      depthWrite={false}
+      roughness={0.7}
+      metalness={0.0}
+      color={isSelected && !isEditingText ? new THREE.Color(0xddddff) : new THREE.Color(0xffffff)}
+      clippingPlanes={clipPlane ? [clipPlane] : []}
+    />
+  );
+
   return (
     <>
-      {createPortal(
-        <Decal
-          mesh={{ current: primaryMesh } as React.RefObject<THREE.Mesh>}
-          position={decal.position}
-          rotation={finalRotation}
-          scale={[sx, sy, safeZDepth]}
-          raycast={() => null}
-          renderOrder={index + 1}
-          castShadow={false}
-          receiveShadow={false}
-        >
-          <meshStandardMaterial
-            map={texture}
-            transparent
-            blending={blendMode}
-            opacity={isEditingText ? 0 : 1}
-            polygonOffset
-            polygonOffsetFactor={-1 - index * 0.5}
-            depthTest={true}
-            depthWrite={false}
-            roughness={0.7}
-            metalness={0.0}
-            color={
-              isSelected && !isEditingText ? new THREE.Color(0xddddff) : new THREE.Color(0xffffff)
-            }
-          />
-        </Decal>,
-        primaryMesh,
-      )}
+      {isPassThrough
+        ? targetMeshes.map((mesh) =>
+            createPortal(
+              <Decal
+                key={`decal-${decal.id}-${mesh.name}`}
+                mesh={{ current: mesh } as React.RefObject<THREE.Mesh>}
+                position={decal.position}
+                rotation={finalRotation}
+                scale={[sx, sy, safeZDepth]}
+                raycast={() => null}
+                renderOrder={index + 1}
+                castShadow={false}
+                receiveShadow={false}
+              >
+                {renderMaterial()}
+              </Decal>,
+              mesh,
+            ),
+          )
+        : createPortal(
+            <Decal
+              mesh={{ current: activeMesh } as React.RefObject<THREE.Mesh>}
+              position={decal.position}
+              rotation={finalRotation}
+              scale={[sx, sy, safeZDepth]}
+              raycast={() => null}
+              renderOrder={index + 1}
+              castShadow={false}
+              receiveShadow={false}
+            >
+              {renderMaterial()}
+            </Decal>,
+            activeMesh,
+          )}
 
       {createPortal(
         <group position={decal.position} rotation={finalRotation}>
@@ -430,12 +477,14 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
                   lastUpdateRef.current = now;
 
                   _raycaster.ray.copy(e.ray);
-                  const hits = _raycaster.intersectObject(primaryMesh, false);
+                  const hits = _raycaster.intersectObjects(targetMeshes, false);
 
                   if (hits.length > 0) {
                     const hit = hits[0];
+                    const hitMesh = hit.object as THREE.Mesh;
+
                     _worldPos.copy(hit.point);
-                    _normalMatrix.getNormalMatrix(primaryMesh.matrixWorld);
+                    _normalMatrix.getNormalMatrix(hitMesh.matrixWorld);
 
                     if (hit.face?.normal) {
                       _worldNormal.copy(hit.face.normal).applyMatrix3(_normalMatrix).normalize();
@@ -453,7 +502,7 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
                     _dummyWorld.lookAt(_targetVec);
                     _dummyWorld.updateMatrix();
 
-                    _invParent.copy(primaryMesh.matrixWorld).invert();
+                    _invParent.copy(hitMesh.matrixWorld).invert();
                     _localMatrix.multiplyMatrices(_invParent, _dummyWorld.matrix);
                     _localMatrix.decompose(_localPos, _localQuat, _localScale);
                     _localEuler.setFromQuaternion(_localQuat);
@@ -465,7 +514,7 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
                     store.decals.forEach((d) => {
                       if (d.id === decal.id) {
                         store.updateDecal(d.id, {
-                          meshName: primaryMesh.name,
+                          meshName: hitMesh.name,
                           position: [_localPos.x, _localPos.y, _localPos.z],
                           rotation: [_localEuler.x, _localEuler.y, _localEuler.z],
                         });
@@ -572,7 +621,7 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
                   </lineSegments>
 
                   <SmartHandle
-                    primaryMesh={primaryMesh}
+                    primaryMesh={activeMesh}
                     position={[-uiHsX, uiHsY, 0]}
                     scaleCursor="nwse-resize"
                     dirX={-1}
@@ -584,7 +633,7 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
                     dragState={dragState}
                   />
                   <SmartHandle
-                    primaryMesh={primaryMesh}
+                    primaryMesh={activeMesh}
                     position={[uiHsX, uiHsY, 0]}
                     scaleCursor="nesw-resize"
                     dirX={1}
@@ -596,7 +645,7 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
                     dragState={dragState}
                   />
                   <SmartHandle
-                    primaryMesh={primaryMesh}
+                    primaryMesh={activeMesh}
                     position={[-uiHsX, -uiHsY, 0]}
                     scaleCursor="nesw-resize"
                     dirX={-1}
@@ -608,7 +657,7 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
                     dragState={dragState}
                   />
                   <SmartHandle
-                    primaryMesh={primaryMesh}
+                    primaryMesh={activeMesh}
                     position={[uiHsX, -uiHsY, 0]}
                     scaleCursor="nwse-resize"
                     dirX={1}
@@ -621,7 +670,7 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
                   />
 
                   <SmartHandle
-                    primaryMesh={primaryMesh}
+                    primaryMesh={activeMesh}
                     position={[0, uiHsY, 0]}
                     scaleCursor="ns-resize"
                     dirX={0}
@@ -633,7 +682,7 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
                     dragState={dragState}
                   />
                   <SmartHandle
-                    primaryMesh={primaryMesh}
+                    primaryMesh={activeMesh}
                     position={[0, -uiHsY, 0]}
                     scaleCursor="ns-resize"
                     dirX={0}
@@ -645,7 +694,7 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
                     dragState={dragState}
                   />
                   <SmartHandle
-                    primaryMesh={primaryMesh}
+                    primaryMesh={activeMesh}
                     position={[uiHsX, 0, 0]}
                     scaleCursor="ew-resize"
                     dirX={1}
@@ -657,7 +706,7 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
                     dragState={dragState}
                   />
                   <SmartHandle
-                    primaryMesh={primaryMesh}
+                    primaryMesh={activeMesh}
                     position={[-uiHsX, 0, 0]}
                     scaleCursor="ew-resize"
                     dirX={-1}
@@ -706,7 +755,7 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
               )}
           </group>
         </group>,
-        primaryMesh,
+        activeMesh,
       )}
     </>
   );

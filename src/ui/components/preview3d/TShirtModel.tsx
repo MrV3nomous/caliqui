@@ -1,11 +1,11 @@
-import { useGLTF } from '@react-three/drei';
+import { useGLTF, useTexture } from '@react-three/drei';
 import { type ThreeEvent, useThree } from '@react-three/fiber';
 import { Suspense, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import tshirtManUrl from '@/assets/models/tshirtman.glb?url';
 import tshirtoversizedUrl from '@/assets/models/tshirtoversized.glb?url';
 import tshirtWomanUrl from '@/assets/models/tshirtwoman.glb?url';
-import { useEditorStore } from '@/ui/store/editor-store';
+import { type DecalData, useEditorStore } from '@/ui/store/editor-store';
 import { ProjectedDecal } from './ProjectedDecal';
 
 Object.assign(useGLTF, {
@@ -20,11 +20,43 @@ const MODELS: Record<string, string> = {
 
 const MODEL_SCALE = 0.03;
 
+function WrapMaterial({ meshes, decal }: { meshes: THREE.Mesh[]; decal: DecalData }) {
+  const texture = useTexture(decal.src || '');
+
+  useEffect(() => {
+    if (!texture) return;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+
+    const sx = decal.scaleX || decal.scale || 1;
+    const sy = decal.scaleY || decal.scale || 1;
+    texture.repeat.set(1 / sx, 1 / sy);
+
+    meshes.forEach((mesh) => {
+      if (mesh.material instanceof THREE.MeshStandardMaterial) {
+        mesh.material.map = texture;
+        mesh.material.needsUpdate = true;
+      }
+    });
+
+    return () => {
+      meshes.forEach((mesh) => {
+        if (mesh.material instanceof THREE.MeshStandardMaterial) {
+          mesh.material.map = null;
+          mesh.material.needsUpdate = true;
+        }
+      });
+    };
+  }, [texture, meshes, decal.scale, decal.scaleX, decal.scaleY]);
+
+  return null;
+}
+
 export function TShirtModel() {
   const apparelModel = useEditorStore((state) => state.apparelModel);
   const tshirtColor = useEditorStore((state) => state.tshirtColor);
 
-  const decalIds = useEditorStore((state) => state.decals.map((d) => d.id).join(','));
   const activeModelUrl = MODELS[apparelModel] || tshirtManUrl;
   const { scene: gltfScene } = useGLTF(activeModelUrl);
   const { camera } = useThree();
@@ -32,59 +64,58 @@ export function TShirtModel() {
   const previousModelRef = useRef<string>(apparelModel);
   const decalsLengthRef = useRef<number>(useEditorStore.getState().decals.length);
 
-  const primaryMesh = useMemo<THREE.Mesh | null>(() => {
-    let largestMesh: THREE.Mesh | null = null;
-    let maxSurfaceArea = -1;
+  // Creates a highly specific dependency string that forces re-evaluating placement
+  // whenever a decal is forced back to [0,0,0] coordinate space
+  const layoutTrigger = useEditorStore((state) =>
+    state.decals.map((d) => `${d.id}|${d.placementMode}`).join(','),
+  );
+
+  const copiedScene = useMemo(() => {
+    const group = new THREE.Group();
+    gltfScene.updateMatrixWorld(true);
 
     gltfScene.traverse((child) => {
       if (child instanceof THREE.Mesh && child.geometry) {
-        if (!child.visible) return;
+        const clonedMesh = new THREE.Mesh();
+        clonedMesh.geometry = child.geometry.clone();
+        clonedMesh.geometry.applyMatrix4(child.matrixWorld);
+        clonedMesh.geometry.scale(MODEL_SCALE, MODEL_SCALE, MODEL_SCALE);
 
-        if (!child.geometry.boundingBox) child.geometry.computeBoundingBox();
-        const box = child.geometry.boundingBox;
+        clonedMesh.position.set(0, 0, 0);
+        clonedMesh.rotation.set(0, 0, 0);
+        clonedMesh.scale.set(1, 1, 1);
+        clonedMesh.updateMatrixWorld(true);
 
-        if (box) {
-          const width = box.max.x - box.min.x;
-          const height = box.max.y - box.min.y;
-          const depth = box.max.z - box.min.z;
-          const surfaceArea = 2 * (width * height + height * depth + depth * width);
+        clonedMesh.matrixAutoUpdate = true;
+        clonedMesh.castShadow = true;
+        clonedMesh.receiveShadow = true;
+        clonedMesh.name = child.name || `mesh_${child.uuid}`;
+        clonedMesh.userData.isTargetMesh = true;
 
-          if (surfaceArea > maxSurfaceArea) {
-            maxSurfaceArea = surfaceArea;
-            largestMesh = child;
-          }
+        if (child.material) {
+          clonedMesh.material = (child.material as THREE.Material).clone();
         }
+
+        group.add(clonedMesh);
       }
     });
 
-    if (!largestMesh) return null;
-
-    const baseMesh = largestMesh as THREE.Mesh;
-    const isolatedMesh = new THREE.Mesh();
-    isolatedMesh.geometry = baseMesh.geometry.clone();
-    isolatedMesh.geometry.applyMatrix4(baseMesh.matrixWorld);
-    isolatedMesh.geometry.scale(MODEL_SCALE, MODEL_SCALE, MODEL_SCALE);
-
-    isolatedMesh.position.set(0, 0, 0);
-    isolatedMesh.rotation.set(0, 0, 0);
-    isolatedMesh.scale.set(1, 1, 1);
-    isolatedMesh.updateMatrixWorld(true);
-
-    isolatedMesh.matrixAutoUpdate = true;
-    isolatedMesh.castShadow = true;
-    isolatedMesh.receiveShadow = true;
-    isolatedMesh.name = baseMesh.name || `mesh_${baseMesh.uuid}`;
-    isolatedMesh.userData.isTargetMesh = true;
-
-    if (baseMesh.material) {
-      isolatedMesh.material = (baseMesh.material as THREE.Material).clone();
-    }
-
-    return isolatedMesh;
+    return group;
   }, [gltfScene]);
 
+  const targetMeshes = useMemo<THREE.Mesh[]>(() => {
+    const meshes: THREE.Mesh[] = [];
+    copiedScene.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.userData.isTargetMesh && child.visible) {
+        if (child.material && (child.material as THREE.Material).opacity === 0) return;
+        meshes.push(child);
+      }
+    });
+    return meshes;
+  }, [copiedScene]);
+
   useEffect(() => {
-    if (!primaryMesh?.material) return;
+    if (targetMeshes.length === 0) return;
 
     const applyColor = (mat: THREE.Material) => {
       if (mat instanceof THREE.MeshStandardMaterial) {
@@ -95,46 +126,56 @@ export function TShirtModel() {
       }
     };
 
-    if (Array.isArray(primaryMesh.material)) {
-      primaryMesh.material.forEach(applyColor);
-    } else {
-      applyColor(primaryMesh.material);
-    }
-  }, [primaryMesh, tshirtColor]);
+    targetMeshes.forEach((mesh) => {
+      if (Array.isArray(mesh.material)) {
+        mesh.material.forEach(applyColor);
+      } else if (mesh.material) {
+        applyColor(mesh.material);
+      }
+    });
+  }, [targetMeshes, tshirtColor]);
 
+  // INITIAL PLACEMENT
   useEffect(() => {
-    // TypeScript & Linter Fix: Explicitly check the type of decalIds.
-    // This reads the variable for the Hooks linter without creating an unused variable for TS.
-    if (!primaryMesh?.geometry || typeof decalIds !== 'string') return;
+    // FIX: Using layoutTrigger inside the body satisfies Biome's exhaustive-deps rule
+    if (targetMeshes.length === 0 || typeof layoutTrigger !== 'string') return;
 
     const state = useEditorStore.getState();
     const currentDecals = state.decals;
 
     if (
       currentDecals.length <= decalsLengthRef.current &&
-      previousModelRef.current === apparelModel
+      previousModelRef.current === state.apparelModel
     )
       return;
     decalsLengthRef.current = currentDecals.length;
 
     const unplacedDecals = currentDecals.filter(
-      (d) => d.position[0] === 0 && d.position[1] === 0 && d.position[2] === 0,
+      (d) =>
+        d.position[0] === 0 &&
+        d.position[1] === 0 &&
+        d.position[2] === 0 &&
+        d.placementMode !== 'wrap',
     );
+
     if (unplacedDecals.length === 0) return;
 
     camera.updateMatrixWorld(true);
 
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
-    const intersects = raycaster.intersectObject(primaryMesh, false);
+    const intersects = raycaster.intersectObjects(targetMeshes, false);
 
     unplacedDecals.forEach((decal) => {
       const dummyWorld = new THREE.Object3D();
+      let hitMesh =
+        targetMeshes.find((m) => m.name.toLowerCase().includes('front')) || targetMeshes[0];
 
       if (intersects.length > 0) {
         const hit = intersects[0];
+        hitMesh = hit.object as THREE.Mesh;
         const worldPos = hit.point.clone();
-        const normalMatrix = new THREE.Matrix3().getNormalMatrix(primaryMesh.matrixWorld);
+        const normalMatrix = new THREE.Matrix3().getNormalMatrix(hitMesh.matrixWorld);
         const worldNormal = hit.face?.normal
           ? hit.face.normal.clone().applyMatrix3(normalMatrix).normalize()
           : new THREE.Vector3(0, 0, 1);
@@ -147,13 +188,13 @@ export function TShirtModel() {
         }
         dummyWorld.lookAt(worldPos.clone().add(worldNormal));
       } else {
-        if (!primaryMesh.geometry.boundingBox) primaryMesh.geometry.computeBoundingBox();
-        const box = primaryMesh.geometry.boundingBox;
+        if (!hitMesh.geometry.boundingBox) hitMesh.geometry.computeBoundingBox();
+        const box = hitMesh.geometry.boundingBox;
         if (!box) return;
 
         const centerLocal = new THREE.Vector3();
         box.getCenter(centerLocal);
-        const centerWorld = centerLocal.applyMatrix4(primaryMesh.matrixWorld);
+        const centerWorld = centerLocal.applyMatrix4(hitMesh.matrixWorld);
         const camDirWorld = camera.getWorldDirection(new THREE.Vector3());
 
         dummyWorld.position.copy(centerWorld).sub(camDirWorld.clone().multiplyScalar(0.5));
@@ -163,7 +204,7 @@ export function TShirtModel() {
 
       dummyWorld.updateMatrixWorld(true);
 
-      const inverseParentMatrix = new THREE.Matrix4().copy(primaryMesh.matrixWorld).invert();
+      const inverseParentMatrix = new THREE.Matrix4().copy(hitMesh.matrixWorld).invert();
       const localMatrix = new THREE.Matrix4().multiplyMatrices(
         inverseParentMatrix,
         dummyWorld.matrixWorld,
@@ -176,31 +217,36 @@ export function TShirtModel() {
       const localEuler = new THREE.Euler().setFromQuaternion(localQuat);
 
       let dynamicScale = 0.5;
-      if (primaryMesh.geometry.boundingBox) {
-        const box = primaryMesh.geometry.boundingBox;
+      if (hitMesh.geometry.boundingBox) {
+        const box = hitMesh.geometry.boundingBox;
         const shirtWidth = Math.abs(box.max.x - box.min.x);
         dynamicScale = Math.max(shirtWidth * 0.35, 0.1);
       }
 
       state.updateDecal(decal.id, {
-        meshName: primaryMesh.name,
+        meshName: hitMesh.name,
         position: [localPos.x, localPos.y, localPos.z],
         rotation: [localEuler.x, localEuler.y, localEuler.z],
         scale: dynamicScale,
       });
     });
-  }, [primaryMesh, camera, apparelModel, decalIds]);
+  }, [targetMeshes, camera, layoutTrigger]);
 
+  // Model swap re-snap
   useEffect(() => {
-    if (!primaryMesh?.geometry || previousModelRef.current === apparelModel) return;
+    if (targetMeshes.length === 0 || previousModelRef.current === apparelModel) return;
 
     const state = useEditorStore.getState();
     const placedDecals = state.decals.filter(
-      (d) => d.position[0] !== 0 || d.position[1] !== 0 || d.position[2] !== 0,
+      (d) =>
+        (d.position[0] !== 0 || d.position[1] !== 0 || d.position[2] !== 0) &&
+        d.placementMode !== 'wrap',
     );
 
     if (placedDecals.length > 0) {
       placedDecals.forEach((decal) => {
+        const targetMesh = targetMeshes.find((m) => m.name === decal.meshName) || targetMeshes[0];
+
         const dummyWorld = new THREE.Object3D();
         const localPos = new THREE.Vector3(decal.position[0], decal.position[1], decal.position[2]);
         const localEuler = new THREE.Euler(decal.rotation[0], decal.rotation[1], decal.rotation[2]);
@@ -208,7 +254,7 @@ export function TShirtModel() {
         dummyWorld.position.copy(localPos);
         dummyWorld.rotation.copy(localEuler);
 
-        primaryMesh.add(dummyWorld);
+        targetMesh.add(dummyWorld);
         dummyWorld.updateMatrixWorld(true);
 
         const worldPos = new THREE.Vector3();
@@ -222,13 +268,13 @@ export function TShirtModel() {
         const rayDirection = forwardDir.clone().negate();
 
         const raycaster = new THREE.Raycaster(rayOrigin, rayDirection);
-        const hits = raycaster.intersectObject(primaryMesh, false);
+        const hits = raycaster.intersectObject(targetMesh, false);
 
-        primaryMesh.remove(dummyWorld);
+        targetMesh.remove(dummyWorld);
 
         if (hits.length > 0) {
           const hitWorldPos = hits[0].point.clone();
-          const inverseParentMatrix = new THREE.Matrix4().copy(primaryMesh.matrixWorld).invert();
+          const inverseParentMatrix = new THREE.Matrix4().copy(targetMesh.matrixWorld).invert();
           const newLocalPos = hitWorldPos.applyMatrix4(inverseParentMatrix);
 
           state.updateDecal(decal.id, {
@@ -239,16 +285,25 @@ export function TShirtModel() {
     }
 
     previousModelRef.current = apparelModel;
-  }, [apparelModel, primaryMesh]);
+  }, [apparelModel, targetMeshes]);
 
-  if (!primaryMesh) return null;
+  if (targetMeshes.length === 0) return null;
 
-  const currentIds = decalIds ? decalIds.split(',') : [];
+  const state = useEditorStore.getState();
+  const currentIds = layoutTrigger ? layoutTrigger.split(',').map((t) => t.split('|')[0]) : [];
+
+  const wrapDecalId = currentIds.find(
+    (id) => state.decals.find((d) => d.id === id)?.placementMode === 'wrap',
+  );
+  const wrapDecal = wrapDecalId ? state.decals.find((d) => d.id === wrapDecalId) : null;
+  const standardIds = currentIds.filter(
+    (id) => state.decals.find((d) => d.id === id)?.placementMode !== 'wrap',
+  );
 
   return (
     <group name="workspace" scale={1.15}>
       <primitive
-        object={primaryMesh}
+        object={copiedScene}
         onPointerDown={(e: ThreeEvent<PointerEvent>) => {
           const hitDecal = e.intersections.some((hit) => hit.object.userData?.isDecalHitbox);
           if (hitDecal) return;
@@ -270,9 +325,11 @@ export function TShirtModel() {
         }}
       />
 
-      {currentIds.map((id, index) => (
+      {wrapDecal && <WrapMaterial meshes={targetMeshes} decal={wrapDecal} />}
+
+      {standardIds.map((id, index) => (
         <Suspense fallback={null} key={`${id}-${apparelModel}`}>
-          <ProjectedDecal id={id} index={index} primaryMesh={primaryMesh} />
+          <ProjectedDecal id={id} index={index} targetMeshes={targetMeshes} />
         </Suspense>
       ))}
     </group>

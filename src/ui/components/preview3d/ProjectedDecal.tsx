@@ -68,7 +68,6 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
 
   const { gl } = useThree();
 
-  // FIX 1: Synchronously enable clipping so the material compiles perfectly on Frame 1
   if (!gl.localClippingEnabled) {
     gl.localClippingEnabled = true;
   }
@@ -202,11 +201,16 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
   const isPassThrough = decal?.placementMode === 'pass-through';
   const isFront = decal?.position ? decal.position[2] >= 0 : true;
 
-  // FIX 2: Added a 0.01 tolerance buffer to completely eliminate mathematically perfect Z-fighting
+  // FIX: Detect if the decal is still in the unplaced [0,0,0] coordinate space.
+  // If it is, disable clipping entirely so it remains visible upon spawn.
   const clipPlane = useMemo(() => {
     if (isPassThrough) return null;
+    const isUnplaced =
+      decal?.position[0] === 0 && decal?.position[1] === 0 && decal?.position[2] === 0;
+    if (isUnplaced) return null;
+
     return new THREE.Plane(new THREE.Vector3(0, 0, isFront ? 1 : -1), 0.01);
-  }, [isPassThrough, isFront]);
+  }, [isPassThrough, isFront, decal?.position]);
 
   const safeZDepth = Number.isNaN(Number(decal?.zDepth))
     ? 0.15
@@ -286,7 +290,6 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
 
   const blendMode = getThreeBlending(decal.blendMode);
 
-  // FIX 3: Dynamic key forces R3F to safely remount the material when switching modes, stopping invisible state lock
   const renderMaterial = () => (
     <meshStandardMaterial
       key={`mat-${isPassThrough ? 'pass' : 'clip'}-${isFront ? 'front' : 'back'}`}

@@ -368,10 +368,15 @@ function SafeTextureDecal({
   const isPassThrough = decal.placementMode === 'pass-through';
   const isFront = decal.position ? decal.position[2] >= 0 : true;
 
+  // FIX: Detect unplaced decals and disable clipping to allow spawn visibility
   const clipPlane = useMemo(() => {
     if (isPassThrough) return null;
+    const isUnplaced =
+      decal?.position[0] === 0 && decal?.position[1] === 0 && decal?.position[2] === 0;
+    if (isUnplaced) return null;
+
     return new THREE.Plane(new THREE.Vector3(0, 0, isFront ? 1 : -1), 0.01);
-  }, [isPassThrough, isFront]);
+  }, [isPassThrough, isFront, decal?.position]);
 
   const safeZDepth = Number.isNaN(Number(decal.zDepth))
     ? 0.15

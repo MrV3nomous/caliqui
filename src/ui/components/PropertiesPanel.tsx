@@ -10,6 +10,8 @@ import {
   getDefaultConfig,
   useEditorStore,
 } from '@/ui/store/editor-store';
+// FIX: Corrected import path to point into the preview3d subfolder
+import { ImageCropModal } from './preview3d/ImageCropModal';
 import { type PropertyDef, TOOL_CONFIG_MAP } from './properties/config';
 
 function SliderControl({
@@ -213,6 +215,7 @@ export function PropertiesPanel({ activeDecalId }: { activeDecalId: string }) {
       'scaleY',
       'rotationOffset',
       'zDepth',
+      'angleLimit',
       'placementMode',
     ];
     const needsRedraw = Object.keys(updates).some((key) => !nonRedrawProps.includes(key));
@@ -336,180 +339,207 @@ export function PropertiesPanel({ activeDecalId }: { activeDecalId: string }) {
   const activeConfigGroups = TOOL_CONFIG_MAP[activeDecal.type] || [];
 
   return (
-    <div className="flex flex-col gap-8 pt-4 pb-6">
-      {/* 3-Mode Selector */}
-      <div className="space-y-3 min-w-0">
-        <Label className="text-[9px] font-medium text-neutral-400 uppercase tracking-[0.2em] block m-0">
-          Placement Mode
-        </Label>
-        <div className="flex bg-white border border-black/[0.04] p-1.5 rounded-2xl justify-between gap-1 overflow-hidden">
-          <button
-            type="button"
-            className={`flex-1 flex justify-center items-center gap-1.5 text-[9px] py-2.5 rounded-xl transition-all outline-none min-w-0 ${
-              !activeDecal.placementMode ||
-              activeDecal.placementMode === 'front' ||
-              activeDecal.placementMode === 'back'
-                ? 'bg-[#fbfbfd] shadow-sm text-black font-bold border border-black/5 tracking-wider uppercase'
-                : 'text-neutral-400 hover:text-black font-medium tracking-wider uppercase'
-            }`}
-            onClick={() => {
-              if (activeDecal.placementMode === 'front' || activeDecal.placementMode === 'back')
-                return;
-              saveHistory();
-              // Only reset 3D coords if coming from Wrap mode so the camera can resnap it
-              const needsReSnap = activeDecal.placementMode === 'wrap';
-              updateVisuals({
-                placementMode: 'front',
-                ...(needsReSnap ? { position: [0, 0, 0], rotation: [0, 0, 0] } : {}),
-              });
-            }}
-          >
-            <Box size={12} /> Front/Back
-          </button>
-
-          <button
-            type="button"
-            className={`flex-1 flex justify-center items-center gap-1.5 text-[9px] py-2.5 rounded-xl transition-all outline-none min-w-0 ${
-              activeDecal.placementMode === 'pass-through'
-                ? 'bg-[#fbfbfd] shadow-sm text-black font-bold border border-black/5 tracking-wider uppercase'
-                : 'text-neutral-400 hover:text-black font-medium tracking-wider uppercase'
-            }`}
-            onClick={() => {
-              if (activeDecal.placementMode === 'pass-through') return;
-              saveHistory();
-              const needsReSnap = activeDecal.placementMode === 'wrap';
-              updateVisuals({
-                placementMode: 'pass-through',
-                ...(needsReSnap ? { position: [0, 0, 0], rotation: [0, 0, 0] } : {}),
-              });
-            }}
-          >
-            <Copy size={12} /> Both Sides
-          </button>
-
-          <button
-            type="button"
-            className={`flex-1 flex justify-center items-center gap-1.5 text-[9px] py-2.5 rounded-xl transition-all outline-none min-w-0 ${
-              activeDecal.placementMode === 'wrap'
-                ? 'bg-[#fbfbfd] shadow-sm text-black font-bold border border-black/5 tracking-wider uppercase'
-                : 'text-neutral-400 hover:text-black font-medium tracking-wider uppercase'
-            }`}
-            onClick={() => {
-              if (activeDecal.placementMode === 'wrap') return;
-              saveHistory();
-              updateVisuals({ placementMode: 'wrap', scale: 1.0, rotation: [0, 0, 0] });
-            }}
-          >
-            <Layers size={12} /> 360° Wrap
-          </button>
-        </div>
-      </div>
-
-      {isImageOrDrawing && (
-        <button
-          type="button"
-          onClick={() => applyBackgroundRemoval(activeDecalId)}
-          disabled={isProcessingBgRemoval}
-          className="w-full flex items-center justify-center gap-2 bg-gradient-to-tr from-neutral-50 to-neutral-100 hover:from-neutral-100 hover:to-neutral-200 border border-black/[0.04] hover:border-black/10 disabled:opacity-50 text-black rounded-2xl p-3 text-[11px] uppercase tracking-[0.1em] font-medium transition-all shadow-sm outline-none"
-        >
-          {isProcessingBgRemoval ? (
-            <>
-              <Loader2 className="animate-spin" size={14} strokeWidth={1.5} /> Processing
-            </>
-          ) : (
-            <>
-              <Sparkles size={14} strokeWidth={1.5} /> Remove Background
-            </>
-          )}
-        </button>
-      )}
-
-      {/* Font Size Controller */}
-      {activeDecal.type === 'text' && (
-        <div className="space-y-4 min-w-0">
-          <div className="flex items-center justify-between pr-1 border-b border-black/[0.02] pb-2">
-            <h4 className="text-[10px] font-medium text-neutral-500 uppercase tracking-[0.25em] pl-1">
-              Typography
-            </h4>
+    <>
+      <ImageCropModal />
+      <div className="flex flex-col gap-8 pt-4 pb-6">
+        {/* 3-Mode Selector */}
+        <div className="space-y-3 min-w-0">
+          <Label className="text-[9px] font-medium text-neutral-400 uppercase tracking-[0.2em] block m-0">
+            Placement Mode
+          </Label>
+          <div className="flex bg-white border border-black/[0.04] p-1.5 rounded-2xl justify-between gap-1 overflow-hidden">
             <button
               type="button"
+              className={`flex-1 flex justify-center items-center gap-1.5 text-[9px] py-2.5 rounded-xl transition-all outline-none min-w-0 ${
+                !activeDecal.placementMode ||
+                activeDecal.placementMode === 'front' ||
+                activeDecal.placementMode === 'back'
+                  ? 'bg-[#fbfbfd] shadow-sm text-black font-bold border border-black/5 tracking-wider uppercase'
+                  : 'text-neutral-400 hover:text-black font-medium tracking-wider uppercase'
+              }`}
               onClick={() => {
+                if (activeDecal.placementMode === 'front' || activeDecal.placementMode === 'back')
+                  return;
                 saveHistory();
-                updateVisuals({ fontSize: defaults.fontSize });
-              }}
-              className="text-neutral-400 hover:text-black transition-colors outline-none"
-              title="Reset Font Size"
-            >
-              <RotateCcw size={12} strokeWidth={1.5} />
-            </button>
-          </div>
-          <SliderControl
-            prop={{ id: 'fontSize', label: 'Font Size', type: 'slider', min: 8, max: 400, step: 1 }}
-            activeDecal={activeDecal}
-            updateVisuals={updateVisuals}
-            saveHistory={saveHistory}
-          />
-        </div>
-      )}
-
-      {/* Z-Depth Free Controller (Hidden when in Full Wrap mode) */}
-      {activeDecal.placementMode !== 'wrap' && (
-        <div className="space-y-4 min-w-0">
-          <div className="flex items-center justify-between pr-1 border-b border-black/[0.02] pb-2">
-            <h4 className="text-[10px] font-medium text-neutral-500 uppercase tracking-[0.25em] pl-1">
-              3D Projection
-            </h4>
-            <button
-              type="button"
-              onClick={() => {
-                saveHistory();
-                updateVisuals({ zDepth: defaults.zDepth ?? 0.15 });
-              }}
-              className="text-neutral-400 hover:text-black transition-colors outline-none"
-              title="Reset Z-Depth"
-            >
-              <RotateCcw size={12} strokeWidth={1.5} />
-            </button>
-          </div>
-          <SliderControl
-            prop={{
-              id: 'zDepth',
-              label: 'Z-Depth (Volume & Curve Wrap)',
-              type: 'slider',
-              min: 0.01,
-              max: 5.0, // Restored absolute freedom up to 5.0 without logic checks
-              step: 0.01,
-            }}
-            activeDecal={activeDecal}
-            updateVisuals={updateVisuals}
-            saveHistory={saveHistory}
-          />
-        </div>
-      )}
-
-      {activeConfigGroups.map((group) => (
-        <div key={group.id} className="space-y-4 min-w-0">
-          <div className="flex items-center justify-between pr-1 border-b border-black/[0.02] pb-2">
-            <h4 className="text-[10px] font-medium text-neutral-500 uppercase tracking-[0.25em] pl-1">
-              {group.title}
-            </h4>
-            <button
-              type="button"
-              onClick={() => {
-                saveHistory();
-                group.properties.forEach((p) => {
-                  updateVisuals({ [p.id]: defaults[p.id as keyof DecalData] });
+                const needsReSnap = activeDecal.placementMode === 'wrap';
+                updateVisuals({
+                  placementMode: 'front',
+                  ...(needsReSnap ? { position: [0, 0, 0], rotation: [0, 0, 0] } : {}),
                 });
               }}
-              className="text-neutral-400 hover:text-black transition-colors outline-none"
-              title="Reset Section"
             >
-              <RotateCcw size={12} strokeWidth={1.5} />
+              <Box size={12} /> Front/Back
+            </button>
+
+            <button
+              type="button"
+              className={`flex-1 flex justify-center items-center gap-1.5 text-[9px] py-2.5 rounded-xl transition-all outline-none min-w-0 ${
+                activeDecal.placementMode === 'pass-through'
+                  ? 'bg-[#fbfbfd] shadow-sm text-black font-bold border border-black/5 tracking-wider uppercase'
+                  : 'text-neutral-400 hover:text-black font-medium tracking-wider uppercase'
+              }`}
+              onClick={() => {
+                if (activeDecal.placementMode === 'pass-through') return;
+                saveHistory();
+                const needsReSnap = activeDecal.placementMode === 'wrap';
+                updateVisuals({
+                  placementMode: 'pass-through',
+                  ...(needsReSnap ? { position: [0, 0, 0], rotation: [0, 0, 0] } : {}),
+                });
+              }}
+            >
+              <Copy size={12} /> Both Sides
+            </button>
+
+            <button
+              type="button"
+              className={`flex-1 flex justify-center items-center gap-1.5 text-[9px] py-2.5 rounded-xl transition-all outline-none min-w-0 ${
+                activeDecal.placementMode === 'wrap'
+                  ? 'bg-[#fbfbfd] shadow-sm text-black font-bold border border-black/5 tracking-wider uppercase'
+                  : 'text-neutral-400 hover:text-black font-medium tracking-wider uppercase'
+              }`}
+              onClick={() => {
+                if (activeDecal.placementMode === 'wrap') return;
+                saveHistory();
+                updateVisuals({ placementMode: 'wrap', scale: 1.0, rotation: [0, 0, 0] });
+              }}
+            >
+              <Layers size={12} /> 360° Wrap
             </button>
           </div>
-          <div className="space-y-6">{group.properties.map(renderControl)}</div>
         </div>
-      ))}
-    </div>
+
+        {isImageOrDrawing && (
+          <button
+            type="button"
+            onClick={() => applyBackgroundRemoval(activeDecalId)}
+            disabled={isProcessingBgRemoval}
+            className="w-full flex items-center justify-center gap-2 bg-gradient-to-tr from-neutral-50 to-neutral-100 hover:from-neutral-100 hover:to-neutral-200 border border-black/[0.04] hover:border-black/10 disabled:opacity-50 text-black rounded-2xl p-3 text-[11px] uppercase tracking-[0.1em] font-medium transition-all shadow-sm outline-none"
+          >
+            {isProcessingBgRemoval ? (
+              <>
+                <Loader2 className="animate-spin" size={14} strokeWidth={1.5} /> Processing
+              </>
+            ) : (
+              <>
+                <Sparkles size={14} strokeWidth={1.5} /> Remove Background
+              </>
+            )}
+          </button>
+        )}
+
+        {/* Font Size Controller */}
+        {activeDecal.type === 'text' && (
+          <div className="space-y-4 min-w-0">
+            <div className="flex items-center justify-between pr-1 border-b border-black/[0.02] pb-2">
+              <h4 className="text-[10px] font-medium text-neutral-500 uppercase tracking-[0.25em] pl-1">
+                Typography
+              </h4>
+              <button
+                type="button"
+                onClick={() => {
+                  saveHistory();
+                  updateVisuals({ fontSize: defaults.fontSize });
+                }}
+                className="text-neutral-400 hover:text-black transition-colors outline-none"
+                title="Reset Font Size"
+              >
+                <RotateCcw size={12} strokeWidth={1.5} />
+              </button>
+            </div>
+            <SliderControl
+              prop={{
+                id: 'fontSize',
+                label: 'Font Size',
+                type: 'slider',
+                min: 8,
+                max: 400,
+                step: 1,
+              }}
+              activeDecal={activeDecal}
+              updateVisuals={updateVisuals}
+              saveHistory={saveHistory}
+            />
+          </div>
+        )}
+
+        {/* Z-Depth & Smear Controllers */}
+        {activeDecal.placementMode !== 'wrap' && (
+          <div className="space-y-4 min-w-0">
+            <div className="flex items-center justify-between pr-1 border-b border-black/[0.02] pb-2">
+              <h4 className="text-[10px] font-medium text-neutral-500 uppercase tracking-[0.25em] pl-1">
+                3D Projection
+              </h4>
+              <button
+                type="button"
+                onClick={() => {
+                  saveHistory();
+                  updateVisuals({
+                    zDepth: defaults.zDepth ?? 0.15,
+                    angleLimit: defaults.angleLimit ?? 85,
+                  });
+                }}
+                className="text-neutral-400 hover:text-black transition-colors outline-none"
+                title="Reset Projection"
+              >
+                <RotateCcw size={12} strokeWidth={1.5} />
+              </button>
+            </div>
+
+            <SliderControl
+              prop={{
+                id: 'zDepth',
+                label: 'Z-Depth (Volume Wrap)',
+                type: 'slider',
+                min: 0.01,
+                max: 5.0,
+                step: 0.01,
+              }}
+              activeDecal={activeDecal}
+              updateVisuals={updateVisuals}
+              saveHistory={saveHistory}
+            />
+
+            <SliderControl
+              prop={{
+                id: 'angleLimit',
+                label: 'Curve Limit (Stop Smearing)',
+                type: 'slider',
+                min: 10,
+                max: 90,
+                step: 1,
+              }}
+              activeDecal={activeDecal}
+              updateVisuals={updateVisuals}
+              saveHistory={saveHistory}
+            />
+          </div>
+        )}
+
+        {activeConfigGroups.map((group) => (
+          <div key={group.id} className="space-y-4 min-w-0">
+            <div className="flex items-center justify-between pr-1 border-b border-black/[0.02] pb-2">
+              <h4 className="text-[10px] font-medium text-neutral-500 uppercase tracking-[0.25em] pl-1">
+                {group.title}
+              </h4>
+              <button
+                type="button"
+                onClick={() => {
+                  saveHistory();
+                  group.properties.forEach((p) => {
+                    updateVisuals({ [p.id]: defaults[p.id as keyof DecalData] });
+                  });
+                }}
+                className="text-neutral-400 hover:text-black transition-colors outline-none"
+                title="Reset Section"
+              >
+                <RotateCcw size={12} strokeWidth={1.5} />
+              </button>
+            </div>
+            <div className="space-y-6">{group.properties.map(renderControl)}</div>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }

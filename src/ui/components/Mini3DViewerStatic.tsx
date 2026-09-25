@@ -1,6 +1,6 @@
 import { Bvh, Decal, Environment, Lightformer, useGLTF, useTexture } from '@react-three/drei';
 import { Canvas, createPortal, useThree } from '@react-three/fiber';
-import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import tshirtManUrl from '@/assets/models/tshirtman.glb?url';
 import tshirtoversizedUrl from '@/assets/models/tshirtoversized.glb?url';
@@ -36,7 +36,6 @@ class DecalErrorBoundary extends React.Component<
   }
 }
 
-// 360 WRAP ENGINE
 function WrapMaterial({ meshes, decal }: { meshes: THREE.Mesh[]; decal: DecalData }) {
   const texture = useTexture(decal.src || '');
   const { invalidate } = useThree();
@@ -435,12 +434,67 @@ function SafeTextureStaticDecal({
 
   const clipPlane = useMemo(() => {
     if (isPassThrough) return null;
+    const isUnplaced =
+      decal?.position[0] === 0 && decal?.position[1] === 0 && decal?.position[2] === 0;
+    if (isUnplaced) return null;
+
     return new THREE.Plane(new THREE.Vector3(0, 0, isFront ? 1 : -1), 0.01);
-  }, [isPassThrough, isFront]);
+  }, [isPassThrough, isFront, decal?.position]);
 
   const safeZDepth = Number.isNaN(Number(decal.zDepth))
     ? 0.15
     : Math.max(decal.zDepth as number, 0.01);
+
+  const safeAngleLimit = Number.isNaN(Number(decal?.angleLimit))
+    ? (85 * Math.PI) / 180
+    : (Math.max(10, Math.min(90, Number(decal?.angleLimit))) * Math.PI) / 180;
+
+  const uniformsRef = useRef({
+    uProjectorDir: { value: new THREE.Vector3(0, 0, 1) },
+    uAngleLimit: { value: Math.cos(safeAngleLimit) },
+  });
+
+  useEffect(() => {
+    uniformsRef.current.uAngleLimit.value = Math.cos(safeAngleLimit);
+    const localDir = new THREE.Vector3(0, 0, 1).applyEuler(
+      new THREE.Euler(rotation.x, rotation.y, rotation.z),
+    );
+    const worldDir = localDir.transformDirection(activeMesh.matrixWorld).normalize();
+    uniformsRef.current.uProjectorDir.value.copy(worldDir);
+    invalidate();
+  }, [safeAngleLimit, rotation, activeMesh, invalidate]);
+
+  // biome-ignore lint/suspicious/noExplicitAny: Internal Three.js shader type varies by version
+  const customOnBeforeCompile = useCallback((shader: any) => {
+    shader.uniforms.uProjectorDir = uniformsRef.current.uProjectorDir;
+    shader.uniforms.uAngleLimit = uniformsRef.current.uAngleLimit;
+
+    shader.vertexShader = `
+      varying vec3 vWorldNormalCustom;
+      ${shader.vertexShader}
+    `.replace(
+      `#include <beginnormal_vertex>`,
+      `#include <beginnormal_vertex>
+       vWorldNormalCustom = normalize(mat3(modelMatrix) * objectNormal);
+      `,
+    );
+
+    shader.fragmentShader = `
+      uniform vec3 uProjectorDir;
+      uniform float uAngleLimit;
+      varying vec3 vWorldNormalCustom;
+      ${shader.fragmentShader}
+    `.replace(
+      `#include <alphatest_fragment>`,
+      `#include <alphatest_fragment>
+       // FIX: Added abs() to dot product for pass-through visibility on opposite side
+       float dotP = abs(dot(normalize(vWorldNormalCustom), uProjectorDir));
+       if (dotP < uAngleLimit) {
+           discard;
+       }
+      `,
+    );
+  }, []);
 
   const scale = new THREE.Vector3(finalSx, finalSy, safeZDepth);
   const blendMode = decal.blendMode === 'multiply' ? THREE.MultiplyBlending : THREE.NormalBlending;
@@ -458,6 +512,7 @@ function SafeTextureStaticDecal({
       metalness={0.0}
       blending={blendMode}
       clippingPlanes={clipPlane ? [clipPlane] : []}
+      onBeforeCompile={customOnBeforeCompile}
     />
   );
 
@@ -470,6 +525,7 @@ function SafeTextureStaticDecal({
                 key={`decal-${decal.id}-${mesh.name}`}
                 mesh={{ current: mesh } as React.RefObject<THREE.Mesh>}
                 position={position}
+                // FIX: Changed finalRotation back to rotation for Static mode compatibility
                 rotation={rotation}
                 scale={scale}
                 renderOrder={index + 1}
@@ -483,6 +539,7 @@ function SafeTextureStaticDecal({
             <Decal
               mesh={{ current: activeMesh } as React.RefObject<THREE.Mesh>}
               position={position}
+              // FIX: Changed finalRotation back to rotation for Static mode compatibility
               rotation={rotation}
               scale={scale}
               renderOrder={index + 1}

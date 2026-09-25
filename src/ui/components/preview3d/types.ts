@@ -1,4 +1,4 @@
-export type InteractionMode = 'idle' | 'drag' | 'resize' | 'rotate';
+export type InteractionMode = 'idle' | 'drag' | 'resize' | 'rotate' | 'crop';
 
 export type DragState = {
   startMouseAngle: number;

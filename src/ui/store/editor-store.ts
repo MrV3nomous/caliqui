@@ -19,7 +19,6 @@ export type CameraView = 'front' | 'back' | 'left' | 'right' | 'top' | 'custom';
 
 export type ApparelModelType = 'tshirtman' | 'tshirtwoman' | 'tshirtoversized';
 
-// NEW: Strict placement control types
 export type PlacementModeType = 'front' | 'back' | 'pass-through' | 'wrap';
 
 export interface BrushSettings {
@@ -74,9 +73,14 @@ export interface DecalData {
   groupId?: string;
 
   aspectRatio?: number;
-
-  // NEW: The core architectural control property
   placementMode?: PlacementModeType;
+
+  angleLimit?: number;
+
+  cropX?: number;
+  cropY?: number;
+  cropW?: number;
+  cropH?: number;
 
   text?: string;
   fill?: string;
@@ -131,6 +135,9 @@ interface EditorState {
   globalToolMode: GlobalToolType;
   brushSettings: BrushSettings;
 
+  // NEW: State for 2D Crop Modal
+  croppingDecalId: string | null;
+
   marqueeStart: [number, number, number] | null;
   marqueeEnd: [number, number, number] | null;
   showMarqueeBox: boolean;
@@ -164,6 +171,7 @@ interface EditorState {
   setEditingDrawingId: (id: string | null) => void;
   setGlobalToolMode: (tool: GlobalToolType) => void;
   setBrushSettings: (settings: Partial<BrushSettings>) => void;
+  setCroppingDecalId: (id: string | null) => void;
 
   setMarqueeStart: (pt: [number, number, number] | null) => void;
   setMarqueeEnd: (pt: [number, number, number] | null) => void;
@@ -257,8 +265,18 @@ export const applyImageFilters = (
     img.onload = () => {
       const isImage = config.type === 'image';
 
-      const imgW = isImage ? img.naturalWidth || 512 : 512;
-      const imgH = isImage ? img.naturalHeight || 512 : 512;
+      const baseImgW = isImage ? img.naturalWidth || 512 : 512;
+      const baseImgH = isImage ? img.naturalHeight || 512 : 512;
+
+      const cropX = config.cropX ?? 0;
+      const cropY = config.cropY ?? 0;
+      const cropW = config.cropW ?? 100;
+      const cropH = config.cropH ?? 100;
+
+      const sourceX = (cropX / 100) * baseImgW;
+      const sourceY = (cropY / 100) * baseImgH;
+      const sourceW = Math.max(1, (cropW / 100) * baseImgW);
+      const sourceH = Math.max(1, (cropH / 100) * baseImgH);
 
       const strokeW = isImage ? config.strokeWidth || 0 : 0;
       const blurW = config.shadowBlur || 0;
@@ -267,8 +285,8 @@ export const applyImageFilters = (
         blurW +
         Math.max(Math.abs(config.shadowOffsetX || 0), Math.abs(config.shadowOffsetY || 0));
 
-      const targetW = imgW + padding * 2;
-      const targetH = imgH + padding * 2;
+      const targetW = sourceW + padding * 2;
+      const targetH = sourceH + padding * 2;
 
       let scaleFactor = 1;
       const MAX_DIM = 1024;
@@ -286,7 +304,7 @@ export const applyImageFilters = (
       const availW = Math.max(1, finalCanvasW - padding * scaleFactor * 2);
       const availH = Math.max(1, finalCanvasH - padding * scaleFactor * 2);
 
-      const imgAspect = imgW / imgH;
+      const imgAspect = sourceW / sourceH;
       const availAspect = availW / availH;
 
       let finalDrawW = availW;
@@ -331,7 +349,7 @@ export const applyImageFilters = (
         if (filters.length > 0) offCtx.filter = filters.join(' ');
 
         offCtx.globalAlpha = (config.opacity ?? 100) / 100;
-        offCtx.drawImage(img, 0, 0, finalDrawW, finalDrawH);
+        offCtx.drawImage(img, sourceX, sourceY, sourceW, sourceH, 0, 0, finalDrawW, finalDrawH);
 
         if (config.tintColor && config.tintOpacity) {
           offCtx.globalCompositeOperation = 'source-atop';
@@ -711,10 +729,15 @@ export const getDefaultConfig = (_type: ToolType): Partial<DecalData> => ({
   squeezeX: 1,
   squeezeY: 1,
   scale: 0.2,
-  zDepth: 1,
+  zDepth: 0.5, // FIX: High depth guarantees immediate visibility on spawn
+  angleLimit: 85,
+  cropX: 0,
+  cropY: 0,
+  cropW: 100,
+  cropH: 100,
   rotationOffset: 0,
   aspectRatio: 1,
-  placementMode: 'front', // Defaults to strict isolation
+  placementMode: 'front',
 });
 
 // Helper function to convert base64 data: URL to a Blob
@@ -735,6 +758,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   editingDrawingId: null,
   globalToolMode: 'default',
   brushSettings: { size: 40, color: '#000000', intensity: 50 },
+
+  croppingDecalId: null,
 
   marqueeStart: null,
   marqueeEnd: null,
@@ -891,6 +916,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setGlobalToolMode: (tool) => set({ globalToolMode: tool }),
   setBrushSettings: (settings) =>
     set((state) => ({ brushSettings: { ...state.brushSettings, ...settings } })),
+  setCroppingDecalId: (id) => set({ croppingDecalId: id }),
 
   setMarqueeStart: (pt) => set({ marqueeStart: pt }),
   setMarqueeEnd: (pt) => set({ marqueeEnd: pt }),
@@ -934,7 +960,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               : 'Image',
       src,
       originalSrc: type === 'image' || type === 'drawing' ? src : undefined,
-      position: overrides?.position || [0, 0, 0],
+      // FIX: Force safe chest projection coordinates upon instantiation
+      position: overrides?.position || [0, 0.05, 0.15],
       rotation: overrides?.rotation || [0, 0, 0],
       ...defaultConfig,
       ...overrides,

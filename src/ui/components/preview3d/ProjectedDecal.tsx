@@ -1,6 +1,6 @@
 import { Decal, Html } from '@react-three/drei';
 import { createPortal, type ThreeEvent, useThree } from '@react-three/fiber';
-import { RotateCw, Trash2 } from 'lucide-react';
+import { Crop, RotateCw, Trash2 } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import {
@@ -201,22 +201,20 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
   const isPassThrough = decal?.placementMode === 'pass-through';
   const isFront = decal?.position ? decal.position[2] >= 0 : true;
 
-  // FIX: Detect if the decal is still in the unplaced [0,0,0] coordinate space.
-  // If it is, disable clipping entirely so it remains visible upon spawn.
   const clipPlane = useMemo(() => {
     if (isPassThrough) return null;
-    const isUnplaced =
-      decal?.position[0] === 0 && decal?.position[1] === 0 && decal?.position[2] === 0;
-    if (isUnplaced) return null;
-
     return new THREE.Plane(new THREE.Vector3(0, 0, isFront ? 1 : -1), 0.01);
-  }, [isPassThrough, isFront, decal?.position]);
+  }, [isPassThrough, isFront]);
 
   const safeZDepth = Number.isNaN(Number(decal?.zDepth))
     ? 0.15
     : Math.max(Number(decal?.zDepth), 0.01);
 
-  const MIN_UI_SIZE = 0.15;
+  const safeAngleLimit = Number.isNaN(Number(decal?.angleLimit))
+    ? (85 * Math.PI) / 180
+    : (Math.max(10, Math.min(90, Number(decal?.angleLimit))) * Math.PI) / 180;
+
+  const MIN_UI_SIZE = 0.35;
   const uiSx = Math.max(Math.abs(sx || MIN_UI_SIZE), MIN_UI_SIZE);
   const uiSy = Math.max(Math.abs(sy || MIN_UI_SIZE), MIN_UI_SIZE);
   const uiHsX = uiSx / 2;
@@ -248,6 +246,52 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
     if (rawOffset) dummy.rotateZ(rawOffset);
     return [dummy.rotation.x, dummy.rotation.y, dummy.rotation.z] as [number, number, number];
   }, [rawRotation, rawOffset]);
+
+  const uniformsRef = useRef({
+    uProjectorDir: { value: new THREE.Vector3(0, 0, 1) },
+    uAngleLimit: { value: Math.cos(safeAngleLimit) },
+  });
+
+  useEffect(() => {
+    uniformsRef.current.uAngleLimit.value = Math.cos(safeAngleLimit);
+    const localDir = new THREE.Vector3(0, 0, 1).applyEuler(
+      new THREE.Euler(finalRotation[0], finalRotation[1], finalRotation[2]),
+    );
+    const worldDir = localDir.transformDirection(activeMesh.matrixWorld).normalize();
+    uniformsRef.current.uProjectorDir.value.copy(worldDir);
+  }, [safeAngleLimit, finalRotation, activeMesh]);
+
+  // biome-ignore lint/suspicious/noExplicitAny: Internal Three.js shader type varies by version
+  const customOnBeforeCompile = useCallback((shader: any) => {
+    shader.uniforms.uProjectorDir = uniformsRef.current.uProjectorDir;
+    shader.uniforms.uAngleLimit = uniformsRef.current.uAngleLimit;
+
+    shader.vertexShader = `
+      varying vec3 vWorldNormalCustom;
+      ${shader.vertexShader}
+    `.replace(
+      `#include <beginnormal_vertex>`,
+      `#include <beginnormal_vertex>
+       vWorldNormalCustom = normalize(mat3(modelMatrix) * objectNormal);
+      `,
+    );
+
+    shader.fragmentShader = `
+      uniform vec3 uProjectorDir;
+      uniform float uAngleLimit;
+      varying vec3 vWorldNormalCustom;
+      ${shader.fragmentShader}
+    `.replace(
+      `#include <alphatest_fragment>`,
+      `#include <alphatest_fragment>
+       // FIX: Added abs() to dot product to support pass-through mode on the backside of meshes
+       float dotP = abs(dot(normalize(vWorldNormalCustom), uProjectorDir));
+       if (dotP < uAngleLimit) {
+           discard;
+       }
+      `,
+    );
+  }, []);
 
   const handleTextSubmit = (val: string) => {
     if (val.trim() && decal) useEditorStore.getState().updateText(decal.id, val);
@@ -305,6 +349,7 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
       metalness={0.0}
       color={isSelected && !isEditingText ? new THREE.Color(0xddddff) : new THREE.Color(0xffffff)}
       clippingPlanes={clipPlane ? [clipPlane] : []}
+      onBeforeCompile={customOnBeforeCompile}
     />
   );
 
@@ -604,7 +649,7 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
                 }
               }}
             >
-              <boxGeometry args={[1, 1, 0.2]} />
+              <boxGeometry args={[1, 1, 0.5]} />
               <meshBasicMaterial transparent opacity={0} depthTest={false} depthWrite={false} />
             </mesh>
 
@@ -722,8 +767,28 @@ export const ProjectedDecal = React.memo(function ProjectedDecal({
                   />
 
                   {mode === 'idle' && (
-                    <Html position={[uiHsX + 0.05, uiHsY + 0.05, 0]} center zIndexRange={[100, 0]}>
+                    <Html
+                      position={[Math.max(uiHsX + 0.05, 0.2), Math.max(uiHsY + 0.05, 0.2), 0]}
+                      center
+                      zIndexRange={[100, 0]}
+                    >
                       <div className="flex gap-1 bg-white/95 backdrop-blur shadow-xl rounded-xl p-1.5 border border-blue-200 pointer-events-auto transform translate-x-4 -translate-y-4 animate-in fade-in duration-200">
+                        {(decal.type === 'image' || decal.type === 'drawing') && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                useEditorStore.getState().setCroppingDecalId(decal.id);
+                              }}
+                              className="p-2 hover:bg-neutral-100 rounded-lg text-neutral-600 transition-colors"
+                              title="Crop Image"
+                            >
+                              <Crop size={18} />
+                            </button>
+                            <div className="w-px bg-neutral-200 my-1 mx-1" />
+                          </>
+                        )}
                         <button
                           type="button"
                           onClick={(e) => {

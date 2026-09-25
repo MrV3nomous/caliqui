@@ -30,7 +30,7 @@ import {
   Type,
   Unlink,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ColorPicker } from '@/ui/components/ColorPicker';
 import { PropertiesPanel } from '@/ui/components/PropertiesPanel';
 import { IconButton } from '@/ui/design-system';
@@ -58,6 +58,18 @@ export function LayersPanel() {
   const [activePropertiesId, setActivePropertiesId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+
+  // FIX: Only auto-switch or auto-close if the panel is ALREADY open.
+  // If it's closed, it stays closed when spawning new assets.
+  useEffect(() => {
+    if (!activePropertiesId) return; // Do nothing if panel is closed
+
+    if (selectedIds.length === 0) {
+      setActivePropertiesId(null); // Close if deleted or deselected
+    } else if (selectedIds.length === 1 && selectedIds[0] !== activePropertiesId) {
+      setActivePropertiesId(selectedIds[0]); // Switch to new asset if panel is already open
+    }
+  }, [selectedIds, activePropertiesId]);
 
   const { groups, standalone } = useMemo(() => {
     const g: Record<string, DecalData[]> = {};
@@ -145,7 +157,7 @@ export function LayersPanel() {
           </IconButton>
           <div className="flex flex-col">
             <span className="font-bold text-[11px] uppercase tracking-[0.1em] text-black truncate max-w-[200px]">
-              {activeDecal?.name}
+              {activeDecal?.name || 'Unknown Layer'}
             </span>
             <span className="text-[9px] text-neutral-400 font-medium tracking-widest uppercase">
               Properties

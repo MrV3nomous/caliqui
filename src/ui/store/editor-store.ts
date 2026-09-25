@@ -711,7 +711,7 @@ export const getDefaultConfig = (_type: ToolType): Partial<DecalData> => ({
   squeezeX: 1,
   squeezeY: 1,
   scale: 0.2,
-  zDepth: 0.5,
+  zDepth: 1,
   rotationOffset: 0,
   aspectRatio: 1,
   placementMode: 'front', // Defaults to strict isolation

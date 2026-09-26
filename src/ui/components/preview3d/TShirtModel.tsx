@@ -1,5 +1,5 @@
 import { useGLTF, useTexture } from '@react-three/drei';
-import type { ThreeEvent } from '@react-three/fiber';
+import { type ThreeEvent, useThree } from '@react-three/fiber';
 import { Suspense, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import tshirtManUrl from '@/assets/models/tshirtman.glb?url';
@@ -59,10 +59,11 @@ export function TShirtModel() {
 
   const activeModelUrl = MODELS[apparelModel] || tshirtManUrl;
   const { scene: gltfScene } = useGLTF(activeModelUrl);
+  const { camera } = useThree();
 
   const previousModelRef = useRef<string>(apparelModel);
+  const decalsLengthRef = useRef<number>(useEditorStore.getState().decals.length);
 
-  // Creates a highly specific dependency string that forces re-evaluating placement
   const layoutTrigger = useEditorStore((state) =>
     state.decals.map((d) => `${d.id}|${d.placementMode}`).join(','),
   );
@@ -131,6 +132,102 @@ export function TShirtModel() {
       }
     });
   }, [targetMeshes, tshirtColor]);
+
+  // FIX: Restored INITIAL PLACEMENT with a highly accurate camera-center raycaster
+  // AND added the normal-vector offset push so it doesn't spawn invisibly inside the mesh!
+  useEffect(() => {
+    if (targetMeshes.length === 0 || typeof layoutTrigger !== 'string') return;
+
+    const state = useEditorStore.getState();
+    const currentDecals = state.decals;
+
+    if (
+      currentDecals.length <= decalsLengthRef.current &&
+      previousModelRef.current === state.apparelModel
+    )
+      return;
+    decalsLengthRef.current = currentDecals.length;
+
+    // Find decals that the store just instantiated at exactly [0,0,0]
+    const unplacedDecals = currentDecals.filter(
+      (d) =>
+        d.position[0] === 0 &&
+        d.position[1] === 0 &&
+        d.position[2] === 0 &&
+        d.placementMode !== 'wrap',
+    );
+
+    if (unplacedDecals.length === 0) return;
+
+    camera.updateMatrixWorld(true);
+
+    // Cast a ray from the exact center of the screen
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+    const intersects = raycaster.intersectObjects(targetMeshes, false);
+
+    unplacedDecals.forEach((decal) => {
+      const dummyWorld = new THREE.Object3D();
+      let hitMesh =
+        targetMeshes.find((m) => m.name.toLowerCase().includes('front')) || targetMeshes[0];
+
+      if (intersects.length > 0) {
+        // If the ray hits the shirt (user is looking directly at it)
+        const hit = intersects[0];
+        hitMesh = hit.object as THREE.Mesh;
+        const worldPos = hit.point.clone();
+        const normalMatrix = new THREE.Matrix3().getNormalMatrix(hitMesh.matrixWorld);
+        const worldNormal = hit.face?.normal
+          ? hit.face.normal.clone().applyMatrix3(normalMatrix).normalize()
+          : new THREE.Vector3(0, 0, 1);
+
+        // FIX: Push the dummy projection box 0.15 units AWAY from the mesh surface along its normal vector.
+        const safeWorldPos = worldPos.clone().add(worldNormal.clone().multiplyScalar(0.15));
+
+        dummyWorld.position.copy(safeWorldPos);
+        if (Math.abs(worldNormal.y) > 0.999) {
+          dummyWorld.up.set(0, 0, 1);
+        } else {
+          dummyWorld.up.set(0, 1, 0);
+        }
+        dummyWorld.lookAt(safeWorldPos.clone().add(worldNormal));
+      } else {
+        // Fallback: If user is looking off into space, spawn it floating in front of the camera
+        const camPos = camera.getWorldPosition(new THREE.Vector3());
+        const camDir = camera.getWorldDirection(new THREE.Vector3());
+        dummyWorld.position.copy(camPos).add(camDir.multiplyScalar(2)); // 2 units in front of camera
+        dummyWorld.lookAt(camPos);
+      }
+
+      dummyWorld.updateMatrixWorld(true);
+
+      const inverseParentMatrix = new THREE.Matrix4().copy(hitMesh.matrixWorld).invert();
+      const localMatrix = new THREE.Matrix4().multiplyMatrices(
+        inverseParentMatrix,
+        dummyWorld.matrixWorld,
+      );
+
+      const localPos = new THREE.Vector3();
+      const localQuat = new THREE.Quaternion();
+      const localScale = new THREE.Vector3();
+      localMatrix.decompose(localPos, localQuat, localScale);
+      const localEuler = new THREE.Euler().setFromQuaternion(localQuat);
+
+      let dynamicScale = 0.5;
+      if (hitMesh.geometry.boundingBox) {
+        const box = hitMesh.geometry.boundingBox;
+        const shirtWidth = Math.abs(box.max.x - box.min.x);
+        dynamicScale = Math.max(shirtWidth * 0.35, 0.1);
+      }
+
+      state.updateDecal(decal.id, {
+        meshName: hitMesh.name,
+        position: [localPos.x, localPos.y, localPos.z],
+        rotation: [localEuler.x, localEuler.y, localEuler.z],
+        scale: dynamicScale,
+      });
+    });
+  }, [targetMeshes, camera, layoutTrigger]);
 
   // Model swap re-snap
   useEffect(() => {

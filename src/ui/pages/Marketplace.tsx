@@ -10,14 +10,17 @@ import {
   Minus,
   Plus,
   Search,
+  Shirt,
   ShoppingBag,
   SlidersHorizontal,
   Sparkles,
+  User,
+  Wand2,
   X,
 } from 'lucide-react';
 import type React from 'react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { env } from '@/shared/env';
 import { AuthModal } from '@/ui/components/AuthModal';
 import { Mini3DViewer } from '@/ui/components/Mini3DViewer';
@@ -26,6 +29,15 @@ import { useAuthStore } from '@/ui/store/auth-store';
 import { useCheckoutStore } from '@/ui/store/checkout-store';
 import type { MarketplaceItem } from '@/ui/store/marketplace-store';
 import { useMarketplaceStore } from '@/ui/store/marketplace-store';
+
+type ApparelModel = 'tshirtman' | 'tshirtwoman' | 'tshirtoversized';
+const FIT_OPTIONS: ApparelModel[] = ['tshirtman', 'tshirtwoman', 'tshirtoversized'];
+
+const FIT_LABELS: Record<ApparelModel, string> = {
+  tshirtman: "Men's",
+  tshirtwoman: "Women's",
+  tshirtoversized: 'Oversized',
+};
 
 const getFinalPrice = (price: number, discount?: number) => {
   if (!discount || discount <= 0) return price;
@@ -60,10 +72,12 @@ function ProductGridCarousel({
   urls,
   alt,
   onOpen,
+  priority = false,
 }: {
   urls: string[];
   alt: string;
   onOpen: () => void;
+  priority?: boolean;
 }) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const dragStart = useRef<number | null>(null);
@@ -71,6 +85,7 @@ function ProductGridCarousel({
   const [isGrabbing, setIsGrabbing] = useState(false);
 
   const handlePointerDown = (e: React.PointerEvent) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
     dragStart.current = e.clientX;
     isDragging.current = false;
     setIsGrabbing(true);
@@ -97,7 +112,20 @@ function ProductGridCarousel({
       e.stopPropagation();
       onOpen();
     }
+
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
     dragStart.current = null;
+    setIsGrabbing(false);
+  };
+
+  const handlePointerCancel = (e: React.PointerEvent) => {
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    dragStart.current = null;
+    isDragging.current = false;
     setIsGrabbing(false);
   };
 
@@ -106,46 +134,34 @@ function ProductGridCarousel({
       <button
         type="button"
         aria-label="Open product"
-        className="absolute inset-0 w-full h-full flex items-center justify-center cursor-pointer bg-[#f8f8f8] border-0 outline-none"
+        className="absolute inset-0 w-full h-full flex items-center justify-center cursor-pointer bg-transparent border-0 outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30"
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
           onOpen();
         }}
       >
-        <Box size={24} className="text-neutral-300" />
+        <Box size={24} className="text-stone-300" />
       </button>
     );
   }
 
   return (
     <div
-      onPointerLeave={() => setIsGrabbing(false)}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
-      onPointerCancel={() => setIsGrabbing(false)}
+      onPointerCancel={handlePointerCancel}
       className={`absolute inset-0 w-full h-full select-none touch-pan-y outline-none ${isGrabbing ? 'cursor-grabbing' : 'cursor-pointer'}`}
     >
       <img
         src={urls[currentIndex]}
         alt={alt}
-        loading="lazy"
+        loading={priority ? 'eager' : 'lazy'}
+        fetchPriority={priority ? 'high' : 'auto'}
         draggable={false}
-        className="w-full h-full object-cover object-top transition-transform duration-1000 group-hover:scale-[1.05] mix-blend-multiply pointer-events-none"
+        className="w-full h-full object-cover object-top transition-transform duration-1000 group-hover:scale-[1.03] mix-blend-multiply pointer-events-none"
       />
-      {urls.length > 1 && (
-        <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-1.5 z-20 pointer-events-none">
-          {urls.map((url, i) => (
-            <div
-              key={url}
-              className={`w-1.5 h-1.5 rounded-full transition-colors ${
-                i === currentIndex ? 'bg-black' : 'bg-black/20'
-              }`}
-            />
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -168,6 +184,7 @@ function ProductDrawerCarousel({
   const [showSwipeHint, setShowSwipeHint] = useState(!isFullScreen);
 
   const handlePointerDown = (e: React.PointerEvent) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
     dragStart.current = e.clientX;
     isDragging.current = false;
     setIsGrabbing(true);
@@ -195,32 +212,44 @@ function ProductDrawerCarousel({
       e.stopPropagation();
       onZoom();
     }
+
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
     dragStart.current = null;
+    setIsGrabbing(false);
+  };
+
+  const handlePointerCancel = (e: React.PointerEvent) => {
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    dragStart.current = null;
+    isDragging.current = false;
     setIsGrabbing(false);
   };
 
   if (urls.length === 0) {
     return (
       <div className="w-full h-full flex items-center justify-center p-8 lg:p-16">
-        <Box size={40} className="text-neutral-300" />
+        <Box size={40} className="text-stone-200" />
       </div>
     );
   }
 
   return (
     <div
-      onPointerLeave={() => setIsGrabbing(false)}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
-      onPointerCancel={() => setIsGrabbing(false)}
-      className={`w-full h-full relative flex items-center justify-center group/carousel bg-[#f8f8f8] overflow-hidden select-none touch-pan-y outline-none ${isGrabbing ? 'cursor-grabbing' : onZoom ? 'cursor-zoom-in' : 'cursor-default'} ${isFullScreen ? 'max-w-none p-4 md:p-16' : 'max-w-[500px] p-6 sm:p-12'}`}
+      onPointerCancel={handlePointerCancel}
+      className={`w-full h-full relative flex items-center justify-center group/carousel bg-[#FAFAFA] overflow-hidden select-none touch-pan-y outline-none ${isGrabbing ? 'cursor-grabbing' : onZoom ? 'cursor-zoom-in' : 'cursor-default'} ${isFullScreen ? 'max-w-none p-4 md:p-16' : 'w-full h-full p-6 sm:p-12'}`}
     >
       <img
         src={urls[currentIndex]}
         alt={alt}
         draggable={false}
-        className={`w-full h-full object-contain mix-blend-multiply transition-opacity duration-300 pointer-events-none ${isFullScreen ? 'drop-shadow-2xl' : ''}`}
+        className={`w-full h-full object-contain mix-blend-multiply transition-opacity duration-500 pointer-events-none`}
       />
 
       {onZoom && (
@@ -232,20 +261,20 @@ function ProductDrawerCarousel({
           }}
           onPointerDown={(e) => e.stopPropagation()}
           onPointerUp={(e) => e.stopPropagation()}
-          className="absolute top-4 right-4 z-20 w-8 h-8 flex items-center justify-center rounded-full bg-white/80 backdrop-blur-sm text-black shadow-sm transition-all hover:bg-white hover:scale-110 outline-none cursor-pointer"
+          className="absolute top-6 right-6 z-20 w-8 h-8 flex items-center justify-center text-stone-400 hover:text-stone-900 transition-colors outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm cursor-pointer"
           aria-label="View fullscreen"
         >
-          <Maximize size={14} strokeWidth={2} />
+          <Maximize size={18} strokeWidth={1.5} />
         </button>
       )}
 
       {urls.length > 1 && (
         <>
           <div
-            className={`md:hidden absolute bottom-12 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/80 backdrop-blur-md px-4 py-2 rounded-full shadow-lg z-30 pointer-events-none transition-opacity duration-1000 ${showSwipeHint ? 'opacity-100' : 'opacity-0'}`}
+            className={`md:hidden absolute bottom-12 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-stone-900/90 backdrop-blur-md px-4 py-2 rounded-sm shadow-lg z-30 pointer-events-none transition-opacity duration-1000 ${showSwipeHint ? 'opacity-100' : 'opacity-0'}`}
           >
             <Hand size={14} className="text-white animate-pulse" />
-            <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white">
+            <span className="text-[9px] font-medium uppercase tracking-[0.2em] text-white">
               Swipe
             </span>
           </div>
@@ -259,9 +288,9 @@ function ProductDrawerCarousel({
             }}
             onPointerDown={(e) => e.stopPropagation()}
             onPointerUp={(e) => e.stopPropagation()}
-            className={`hidden md:flex absolute left-4 lg:left-8 top-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 hover:bg-white text-black shadow-md transition-all z-20 outline-none opacity-0 group-hover/carousel:opacity-100 hover:scale-110 cursor-pointer ${isFullScreen ? 'w-14 h-14' : 'w-10 h-10'}`}
+            className={`hidden md:flex absolute left-4 lg:left-8 top-1/2 -translate-y-1/2 items-center justify-center text-stone-400 hover:text-stone-900 transition-all z-20 outline-none opacity-0 group-hover/carousel:opacity-100 cursor-pointer w-10 h-10 focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-full`}
           >
-            <ChevronLeft size={isFullScreen ? 28 : 20} strokeWidth={2} />
+            <ChevronLeft size={28} strokeWidth={1} />
           </button>
 
           <button
@@ -273,12 +302,12 @@ function ProductDrawerCarousel({
             }}
             onPointerDown={(e) => e.stopPropagation()}
             onPointerUp={(e) => e.stopPropagation()}
-            className={`hidden md:flex absolute right-4 lg:right-8 top-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 hover:bg-white text-black shadow-md transition-all z-20 outline-none opacity-0 group-hover/carousel:opacity-100 hover:scale-110 cursor-pointer ${isFullScreen ? 'w-14 h-14' : 'w-10 h-10'}`}
+            className={`hidden md:flex absolute right-4 lg:right-8 top-1/2 -translate-y-1/2 items-center justify-center text-stone-400 hover:text-stone-900 transition-all z-20 outline-none opacity-0 group-hover/carousel:opacity-100 cursor-pointer w-10 h-10 focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-full`}
           >
-            <ChevronRight size={isFullScreen ? 28 : 20} strokeWidth={2} />
+            <ChevronRight size={28} strokeWidth={1} />
           </button>
 
-          <div className="absolute bottom-6 left-0 right-0 flex justify-center gap-2 z-20">
+          <div className="absolute bottom-8 left-0 right-0 flex justify-center gap-3 z-20">
             {urls.map((url, i) => (
               <button
                 key={url}
@@ -290,8 +319,8 @@ function ProductDrawerCarousel({
                 }}
                 onPointerDown={(e) => e.stopPropagation()}
                 onPointerUp={(e) => e.stopPropagation()}
-                className={`h-2 rounded-full transition-all outline-none p-0 m-0 border-none cursor-pointer ${
-                  i === currentIndex ? 'bg-black w-4' : 'bg-black/20 w-2 hover:bg-black/40'
+                className={`h-px transition-all outline-none p-0 m-0 border-none cursor-pointer focus-visible:ring-1 focus-visible:ring-stone-900/30 ${
+                  i === currentIndex ? 'bg-stone-900 w-8' : 'bg-stone-300 w-4 hover:bg-stone-500'
                 }`}
               />
             ))}
@@ -302,42 +331,26 @@ function ProductDrawerCarousel({
   );
 }
 
-// PERFORMANCE OPTIMIZATION: Memoize ProductCard to prevent 3D canvas re-renders when parent state updates
 const ProductCard = memo(function ProductCard({
   product,
   onOpen,
   selectedFit,
+  priority = false,
 }: {
   product: MarketplaceItem;
   onOpen: (p: MarketplaceItem) => void;
-  selectedFit: 'tshirtman' | 'tshirtwoman' | 'tshirtoversized';
+  selectedFit: ApparelModel;
+  priority?: boolean;
 }) {
   const sortedUrls = getSortedGallery(product);
   const is3DModel = Boolean(product.canvas_state && product.canvas_state.length > 0);
 
   return (
-    <div className="group flex flex-col w-full bg-transparent border-0 p-0 m-0 text-left">
-      <div className="relative aspect-[4/5] overflow-hidden mb-6 w-full flex items-center justify-center bg-[#f8f8f8] rounded-2xl group-hover:bg-[#f0f0f0] transition-colors duration-500">
-        <div className="absolute top-4 left-4 z-20 flex flex-col gap-1.5 items-start pointer-events-none">
-          {product.is_new && (
-            <span className="bg-blue-50 text-blue-600 px-2 py-1 text-[8px] font-bold uppercase tracking-widest rounded-md border border-blue-100/50">
-              New
-            </span>
-          )}
-          {product.is_bestseller && (
-            <span className="bg-amber-50 text-amber-600 px-2 py-1 text-[8px] font-bold uppercase tracking-widest rounded-md border border-amber-100/50">
-              Best Seller
-            </span>
-          )}
-          {product.is_trending && (
-            <span className="bg-purple-50 text-purple-600 px-2 py-1 text-[8px] font-bold uppercase tracking-widest rounded-md border border-purple-100/50">
-              Trending
-            </span>
-          )}
-        </div>
-
+    <div className="group flex flex-col w-full bg-transparent border-0 p-0 m-0 text-left relative focus-within:z-10">
+      <div className="relative aspect-[4/5] overflow-hidden mb-4 w-full flex items-center justify-center bg-transparent">
         {is3DModel ? (
           <Mini3DViewerStatic
+            key={`${product.id}-${selectedFit}`}
             canvasState={product.canvas_state}
             tshirtColor={product.tshirt_color || '#ffffff'}
             apparelModel={selectedFit}
@@ -348,33 +361,46 @@ const ProductCard = memo(function ProductCard({
             urls={sortedUrls}
             alt={product.name}
             onOpen={() => onOpen(product)}
+            priority={priority}
           />
         )}
       </div>
 
       <button
         type="button"
-        className="flex flex-col items-center text-center w-full px-2 cursor-pointer outline-none border-0 bg-transparent"
+        className="flex flex-col w-full cursor-pointer outline-none border-0 bg-transparent rounded-sm focus-visible:ring-2 focus-visible:ring-stone-900/10 transition-all"
         onClick={() => onOpen(product)}
       >
-        <h3 className="font-light text-xs tracking-[0.15em] uppercase mb-1.5 text-black truncate w-full">
-          {product.name}
-        </h3>
-        <div className="flex items-center justify-center gap-2">
-          {product.discount_percentage && product.discount_percentage > 0 ? (
-            <>
-              <span className="text-[10px] font-medium text-neutral-300 line-through tracking-widest">
-                ₹{product.price.toLocaleString('en-IN')}
-              </span>
-              <span className="text-[10px] font-bold text-red-500 tracking-widest">
-                ₹{getFinalPrice(product.price, product.discount_percentage).toLocaleString('en-IN')}
-              </span>
-            </>
-          ) : (
-            <span className="text-[10px] font-medium text-neutral-400 tracking-widest">
-              ₹{product.price.toLocaleString('en-IN')}
+        <div className="flex flex-col items-start w-full opacity-100 sm:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-300">
+          {product.is_new && (
+            <span className="text-[8px] font-bold uppercase tracking-[0.2em] text-stone-400 mb-1">
+              New
             </span>
           )}
+
+          <h3 className="font-medium text-[10px] tracking-[0.14em] uppercase mb-1 text-stone-900 truncate w-full flex gap-2 items-center">
+            {product.name}
+          </h3>
+
+          <div className="flex items-center gap-3">
+            {product.discount_percentage && product.discount_percentage > 0 ? (
+              <>
+                <span className="text-[10px] font-medium text-stone-900 tracking-[0.1em]">
+                  ₹
+                  {getFinalPrice(product.price, product.discount_percentage).toLocaleString(
+                    'en-IN',
+                  )}
+                </span>
+                <span className="text-[10px] text-stone-400 line-through tracking-[0.1em]">
+                  ₹{product.price.toLocaleString('en-IN')}
+                </span>
+              </>
+            ) : (
+              <span className="text-[10px] font-medium text-stone-500 tracking-[0.1em]">
+                ₹{product.price.toLocaleString('en-IN')}
+              </span>
+            )}
+          </div>
         </div>
       </button>
     </div>
@@ -382,8 +408,9 @@ const ProductCard = memo(function ProductCard({
 });
 
 export function Marketplace() {
+  const navigate = useNavigate();
   const { isAuthenticated, openAuthModal } = useAuthStore();
-  const { cart, addToCart } = useCheckoutStore();
+  const { cart, addToCart, updateCartItemQuantity } = useCheckoutStore();
 
   const {
     items,
@@ -399,20 +426,26 @@ export function Marketplace() {
     fetchSpotlightItems,
     fetchRandomItems,
     fetchItems,
+    fetchItemById,
     incrementPopularity,
   } = useMarketplaceStore();
 
   const [searchParams, setSearchParams] = useSearchParams();
-
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<string>('All');
-
   const [selectedProduct, setSelectedProduct] = useState<MarketplaceItem | null>(null);
-  const [selectedFit, setSelectedFit] = useState<'tshirtman' | 'tshirtwoman' | 'tshirtoversized'>(
-    'tshirtman',
-  );
+
+  const [globalFit, setGlobalFit] = useState<ApparelModel>('tshirtman');
+  const [drawerFit, setDrawerFit] = useState<ApparelModel>('tshirtman');
+
+  const [activeDropdown, setActiveDropdown] = useState<'fit' | 'search' | 'surprise' | null>(null);
+  const headerActionsRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const fullscreenCloseRef = useRef<HTMLButtonElement>(null);
+
   const [selectedSizes, setSelectedSizes] = useState<Record<string, number>>({
     XS: 0,
     S: 0,
@@ -423,17 +456,109 @@ export function Marketplace() {
   });
   const [focusedSize, setFocusedSize] = useState<string>('M');
   const [isAdding, setIsAdding] = useState(false);
-  const [cartAnim, setCartAnim] = useState(false);
+  const [_cartAnim, setCartAnim] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
 
+  const scrollRef = useRef<HTMLDivElement>(null);
   const skeletonKeys = useMemo(() => Array.from({ length: 12 }).map(() => crypto.randomUUID()), []);
-
   const observerTarget = useRef<HTMLDivElement>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isLongPress = useRef(false);
+  const requestedItemIdRef = useRef<string | null>(null);
+  const globalFitRef = useRef(globalFit);
 
+  const isLongPress = useRef(false);
   const isNavigating = useRef(false);
   const drawerMountTime = useRef(0);
+
+  const spotlightIds = useMemo(
+    () => new Set(spotlightItems.map((item) => item.id)),
+    [spotlightItems],
+  );
+
+  const archiveItems = useMemo(
+    () => items.filter((item) => !spotlightIds.has(item.id)),
+    [items, spotlightIds],
+  );
+
+  const shouldShowSpotlight =
+    !isShuffleMode && activeCategory === 'All' && !debouncedSearch && spotlightItems.length > 0;
+
+  const hasVisibleProducts = archiveItems.length > 0 || shouldShowSpotlight;
+
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearLongPressTimer();
+    };
+  }, [clearLongPressTimer]);
+
+  useEffect(() => {
+    globalFitRef.current = globalFit;
+  }, [globalFit]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+
+      if (isFullscreen) {
+        setIsFullscreen(false);
+        return;
+      }
+      if (selectedProduct) {
+        isNavigating.current = true;
+        setSearchParams((params) => {
+          params.delete('item');
+          return params;
+        });
+        setSelectedProduct(null);
+        requestedItemIdRef.current = null;
+        if (scrollRef.current) {
+          scrollRef.current.style.overflowY = 'auto';
+          scrollRef.current.style.overflowX = 'hidden';
+        }
+        setTimeout(() => {
+          isNavigating.current = false;
+        }, 150);
+        return;
+      }
+      if (activeDropdown) {
+        setActiveDropdown(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFullscreen, selectedProduct, activeDropdown, setSearchParams]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (headerActionsRef.current && !headerActionsRef.current.contains(event.target as Node)) {
+        setActiveDropdown(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    if (activeDropdown !== 'search') return;
+    const timer = window.setTimeout(() => {
+      searchInputRef.current?.focus();
+    }, 100);
+    return () => window.clearTimeout(timer);
+  }, [activeDropdown]);
+
+  useEffect(() => {
+    if (isFullscreen) {
+      fullscreenCloseRef.current?.focus();
+    }
+  }, [isFullscreen]);
 
   useEffect(() => {
     fetchCollections();
@@ -473,23 +598,106 @@ export function Marketplace() {
     };
   }, [hasMore, isLoading, isLoadingMore, activeCategory, debouncedSearch, currentPage, fetchItems]);
 
+  const itemId = searchParams.get('item');
+
   useEffect(() => {
     if (isNavigating.current) return;
+    let cancelled = false;
 
-    const itemId = searchParams.get('item');
-    if (itemId && items.length > 0) {
-      const product = items.find((i) => i.id === itemId);
-      if (product && product.id !== selectedProduct?.id) {
-        setSelectedProduct(product);
-        setSelectedSizes({ XS: 0, S: 0, M: 1, L: 0, XL: 0, XXL: 0 });
-        setFocusedSize('M');
-        document.body.style.overflow = 'hidden';
+    if (!itemId) {
+      requestedItemIdRef.current = null;
+      if (selectedProduct?.id) {
+        setSelectedProduct(null);
+        if (scrollRef.current) {
+          scrollRef.current.style.overflowY = 'auto';
+          scrollRef.current.style.overflowX = 'hidden';
+        }
       }
-    } else if (!itemId && selectedProduct?.id) {
-      setSelectedProduct(null);
-      document.body.style.overflow = 'auto';
+      return () => {
+        cancelled = true;
+      };
     }
-  }, [items, searchParams, selectedProduct?.id]);
+
+    const cachedProduct = [...spotlightItems, ...items].find((i) => i.id === itemId);
+
+    if (cachedProduct) {
+      requestedItemIdRef.current = null;
+      const isNewProduct = selectedProduct?.id !== cachedProduct.id;
+
+      if (isNewProduct) {
+        setSelectedProduct(cachedProduct);
+        setSelectedSizes({ XS: 0, S: 0, M: 0, L: 0, XL: 0, XXL: 0 });
+        setFocusedSize('M');
+        setDrawerFit(
+          cachedProduct.canvas_state
+            ? globalFitRef.current
+            : (cachedProduct.apparel_model as ApparelModel) || 'tshirtman',
+        );
+      }
+
+      if (scrollRef.current) {
+        scrollRef.current.style.overflow = 'hidden';
+      }
+
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (!fetchItemById || requestedItemIdRef.current === itemId) return;
+    requestedItemIdRef.current = itemId;
+
+    void fetchItemById(itemId)
+      .then((fetchedProduct) => {
+        if (cancelled || !fetchedProduct) {
+          if (requestedItemIdRef.current === itemId) {
+            requestedItemIdRef.current = null;
+          }
+          return;
+        }
+
+        const isNewProduct = selectedProduct?.id !== fetchedProduct.id;
+
+        if (isNewProduct) {
+          setSelectedProduct(fetchedProduct);
+          setSelectedSizes({ XS: 0, S: 0, M: 0, L: 0, XL: 0, XXL: 0 });
+          setFocusedSize('M');
+          setDrawerFit(
+            fetchedProduct.canvas_state
+              ? globalFitRef.current
+              : (fetchedProduct.apparel_model as ApparelModel) || 'tshirtman',
+          );
+        }
+
+        requestedItemIdRef.current = itemId;
+
+        if (scrollRef.current) {
+          scrollRef.current.style.overflow = 'hidden';
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.error('Failed to resolve marketplace item:', error);
+        }
+        if (requestedItemIdRef.current === itemId) {
+          requestedItemIdRef.current = null;
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemId, items, spotlightItems, fetchItemById, selectedProduct?.id]);
+
+  useEffect(() => {
+    return () => {
+      if (scrollRef.current) {
+        scrollRef.current.style.overflowY = 'auto';
+        scrollRef.current.style.overflowX = 'hidden';
+      }
+    };
+  }, []);
 
   const totalCartItems = cart.reduce(
     (acc, item) => acc + Object.values(item.sizes).reduce((a, b) => a + b, 0),
@@ -535,42 +743,52 @@ export function Marketplace() {
   };
 
   const handleTouchEnd = () => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-    }
+    clearLongPressTimer();
   };
 
-  // PERFORMANCE OPTIMIZATION: useCallback prevents onOpen prop from breaking the memoization of ProductCards
+  const handleTouchCancel = () => {
+    clearLongPressTimer();
+  };
+
   const handleOpenProduct = useCallback(
     (product: MarketplaceItem) => {
       incrementPopularity(product.id);
       drawerMountTime.current = Date.now();
-
       isNavigating.current = true;
 
       setSearchParams({ item: product.id });
       setSelectedProduct(product);
-      setSelectedSizes({ XS: 0, S: 0, M: 1, L: 0, XL: 0, XXL: 0 });
+      setSelectedSizes({ XS: 0, S: 0, M: 0, L: 0, XL: 0, XXL: 0 });
       setFocusedSize('M');
-      setSelectedFit(
-        (product.apparel_model as 'tshirtman' | 'tshirtwoman' | 'tshirtoversized') || 'tshirtman',
+      requestedItemIdRef.current = product.id;
+
+      setDrawerFit(
+        product.canvas_state ? globalFit : (product.apparel_model as ApparelModel) || 'tshirtman',
       );
-      document.body.style.overflow = 'hidden';
+
+      if (scrollRef.current) scrollRef.current.style.overflow = 'hidden';
 
       setTimeout(() => {
         isNavigating.current = false;
       }, 150);
     },
-    [incrementPopularity, setSearchParams],
+    [incrementPopularity, setSearchParams, globalFit],
   );
 
   const handleCloseProduct = () => {
     isNavigating.current = true;
-
-    setSearchParams({});
+    setSearchParams((params) => {
+      params.delete('item');
+      return params;
+    });
     setSelectedProduct(null);
+    requestedItemIdRef.current = null;
     setIsFullscreen(false);
-    document.body.style.overflow = 'auto';
+
+    if (scrollRef.current) {
+      scrollRef.current.style.overflowY = 'auto';
+      scrollRef.current.style.overflowX = 'hidden';
+    }
 
     setTimeout(() => {
       isNavigating.current = false;
@@ -589,18 +807,11 @@ export function Marketplace() {
     }
   };
 
-  useEffect(() => {
-    return () => {
-      document.body.style.overflow = 'auto';
-    };
-  }, []);
-
   const confirmAddToCart = () => {
     if (!selectedProduct) return;
     setIsAdding(true);
 
-    const state = useCheckoutStore.getState();
-    let existing = state.cart.find((c) => c.productId === selectedProduct.id);
+    let existing = cart.find((c) => c.productId === selectedProduct.id);
 
     if (!existing) {
       const smartThumbnail = getSortedGallery(selectedProduct)[0];
@@ -612,18 +823,18 @@ export function Marketplace() {
         price: currentItemPrice,
         canvasState: selectedProduct.canvas_state,
         tshirtColor: selectedProduct.tshirt_color,
-        apparelModel: selectedProduct.canvas_state ? selectedFit : selectedProduct.apparel_model,
+        apparelModel: selectedProduct.canvas_state ? drawerFit : selectedProduct.apparel_model,
       });
-      const newState = useCheckoutStore.getState();
-      existing = newState.cart.find((c) => c.productId === selectedProduct.id);
-      if (existing) newState.updateCartItemQuantity(existing.cartId, 'M', -1);
+      const state = useCheckoutStore.getState();
+      existing = state.cart.find((c) => c.productId === selectedProduct.id);
+      if (existing) updateCartItemQuantity(existing.cartId, 'M', -1);
     }
 
     const targetCartId = existing?.cartId;
     if (targetCartId) {
       Object.entries(selectedSizes).forEach(([size, qty]) => {
         if (qty > 0) {
-          useCheckoutStore.getState().updateCartItemQuantity(targetCartId, size, qty);
+          updateCartItemQuantity(targetCartId, size, qty);
         }
       });
     }
@@ -636,26 +847,43 @@ export function Marketplace() {
     }, 800);
   };
 
+  const toggleDropdown = (name: 'fit' | 'search' | 'surprise') => {
+    setActiveDropdown((prev) => (prev === name ? null : name));
+  };
+
   return (
-    <div className="w-full h-dvh flex flex-col bg-white font-sans selection:bg-neutral-200 text-black relative select-none">
+    <div
+      ref={scrollRef}
+      className="relative w-full h-[100dvh] overflow-y-auto overflow-x-hidden bg-[#FAFAFA] font-sans selection:bg-stone-200 text-stone-900 select-none custom-scrollbar"
+    >
+      <AuthModal />
+
+      {/* FULLSCREEN IMAGE/3D VIEWER */}
       {isFullscreen && selectedProduct && (
-        <div className="fixed inset-0 z-[600] bg-[#f8f8f8] flex flex-col animate-in fade-in zoom-in-95 duration-300">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${selectedProduct.name} fullscreen viewer`}
+          className="fixed inset-0 z-[600] bg-[#FAFAFA] flex flex-col animate-in fade-in duration-500"
+        >
           <button
+            ref={fullscreenCloseRef}
             type="button"
+            aria-label="Close fullscreen"
             onClick={() => setIsFullscreen(false)}
-            className="absolute top-6 right-6 sm:top-8 sm:right-8 z-50 w-12 h-12 flex items-center justify-center bg-white/90 hover:bg-white backdrop-blur-md text-black rounded-full shadow-lg transition-transform hover:scale-110 outline-none cursor-pointer"
+            className="absolute top-8 right-8 z-50 w-12 h-12 flex items-center justify-center text-stone-400 hover:text-stone-900 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-stone-900/30 rounded-full cursor-pointer"
           >
-            <X size={24} strokeWidth={1.5} />
+            <X size={24} strokeWidth={1} />
           </button>
-          <div className="flex-1 w-full h-full relative p-4 md:p-12">
+          <div className="flex-1 w-full h-full relative">
             {selectedProduct.canvas_state ? (
               <div className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing mix-blend-multiply flex items-center justify-center">
                 <Mini3DViewer
-                  key={`fullscreen-${selectedProduct.id}-${selectedFit}`}
+                  key={`fullscreen-${selectedProduct.id}-${drawerFit}`}
                   canvasState={selectedProduct.canvas_state}
                   tshirtColor={selectedProduct.tshirt_color || '#ffffff'}
                   fallbackImage={selectedProduct.thumbnail_url}
-                  apparelModel={selectedFit}
+                  apparelModel={drawerFit}
                 />
               </div>
             ) : (
@@ -669,12 +897,13 @@ export function Marketplace() {
         </div>
       )}
 
+      {/* DRAWER MODAL */}
       {selectedProduct && (
         <div className="fixed inset-0 z-[500] flex justify-end">
           <button
             type="button"
             aria-label="Close product details"
-            className="absolute inset-0 w-full h-full bg-black/40 backdrop-blur-sm outline-none cursor-default border-0 p-0 m-0 animate-in fade-in duration-700"
+            className="absolute inset-0 w-full h-full bg-stone-950/20 backdrop-blur-sm outline-none cursor-default border-0 p-0 m-0 animate-in fade-in duration-500"
             onClick={(_e) => {
               if (Date.now() - drawerMountTime.current < 400) return;
               handleCloseProduct();
@@ -684,17 +913,19 @@ export function Marketplace() {
           <div
             role="dialog"
             aria-modal="true"
-            className="relative z-10 w-full md:w-[215px] lg:w-[250px] min-w-[50vw] max-w-full md:max-w-2xl h-[100dvh] bg-white md:shadow-2xl flex flex-col md:flex-row animate-in slide-in-from-bottom md:slide-in-from-right duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-y-auto md:overflow-hidden hide-scrollbar"
+            aria-labelledby="product-dialog-title"
+            aria-hidden={isFullscreen ? true : undefined}
+            className="relative z-10 w-full md:w-[800px] lg:w-[1000px] h-[100dvh] bg-white flex flex-col md:flex-row animate-in slide-in-from-right duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden custom-scrollbar"
           >
-            <div className="w-full md:w-1/2 h-[55vh] md:h-full bg-[#f8f8f8] shrink-0 relative flex items-center justify-center border-b md:border-b-0 md:border-r border-black/5 overflow-hidden z-10">
+            <div className="w-full md:w-[55%] h-[55vh] md:h-full bg-[#FAFAFA] shrink-0 relative flex items-center justify-center border-b md:border-b-0 md:border-r border-stone-100">
               {selectedProduct.canvas_state ? (
-                <div className="absolute inset-0 w-full h-full pointer-events-auto cursor-grab active:cursor-grabbing mix-blend-multiply flex items-center justify-center p-4 md:p-8">
+                <div className="absolute inset-0 w-full h-full pointer-events-auto cursor-grab active:cursor-grabbing mix-blend-multiply flex items-center justify-center p-8">
                   <Mini3DViewer
-                    key={`drawer-${selectedProduct.id}-${selectedFit}`}
+                    key={`drawer-${selectedProduct.id}-${drawerFit}`}
                     canvasState={selectedProduct.canvas_state}
                     tshirtColor={selectedProduct.tshirt_color || '#ffffff'}
                     fallbackImage={selectedProduct.thumbnail_url}
-                    apparelModel={selectedFit}
+                    apparelModel={drawerFit}
                   />
                   <button
                     type="button"
@@ -702,10 +933,10 @@ export function Marketplace() {
                       e.stopPropagation();
                       setIsFullscreen(true);
                     }}
-                    className="absolute top-4 right-4 md:top-6 md:right-6 z-20 w-10 h-10 flex items-center justify-center rounded-full bg-white/80 backdrop-blur-md text-black shadow-sm transition-all hover:bg-white hover:scale-110 outline-none cursor-pointer"
+                    className="absolute top-6 right-6 z-20 w-8 h-8 flex items-center justify-center text-stone-400 hover:text-stone-900 transition-colors outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm cursor-pointer"
                     aria-label="View fullscreen"
                   >
-                    <Maximize size={16} strokeWidth={2} />
+                    <Maximize size={16} strokeWidth={1.5} />
                   </button>
                 </div>
               ) : (
@@ -717,146 +948,102 @@ export function Marketplace() {
               )}
             </div>
 
-            <div className="w-full md:w-1/2 flex flex-col bg-white relative z-20 md:h-full md:overflow-y-auto min-h-[60vh] pb-12 md:pb-0">
+            <div className="flex flex-col w-full md:w-[45%] flex-1 min-h-0 px-8 py-10 md:px-16 md:py-16 bg-white overflow-y-auto custom-scrollbar relative">
               <button
                 type="button"
                 onClick={handleCloseProduct}
-                className="absolute top-4 right-4 sm:top-6 sm:right-6 z-50 w-10 h-10 flex items-center justify-center bg-[#fbfbfd] hover:bg-neutral-100 rounded-full text-neutral-500 hover:text-black transition-colors outline-none border border-black/5 cursor-pointer"
+                className="absolute top-6 right-6 md:top-8 md:right-8 z-50 w-8 h-8 flex items-center justify-center text-stone-400 hover:text-stone-900 transition-colors outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm cursor-pointer"
                 aria-label="Close details"
               >
                 <X size={20} strokeWidth={1.5} />
               </button>
 
-              <div className="w-full flex justify-center pt-4 pb-2 md:hidden">
-                <div className="w-12 h-1.5 bg-neutral-200 rounded-full" />
+              <div className="flex items-center justify-between mb-8 pr-12">
+                <p className="text-[9px] font-medium uppercase tracking-[0.2em] text-stone-400">
+                  {selectedProduct.collection || 'Collection'}
+                </p>
+                <button
+                  type="button"
+                  onClick={handleShareLink}
+                  className="flex items-center gap-1.5 text-stone-400 hover:text-stone-900 transition-colors outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm cursor-pointer"
+                >
+                  {isCopied ? (
+                    <Check size={12} strokeWidth={2} />
+                  ) : (
+                    <LinkIcon size={12} strokeWidth={1.5} />
+                  )}
+                  <span className="text-[9px] font-medium uppercase tracking-[0.1em]">
+                    {isCopied ? 'Copied' : 'Share'}
+                  </span>
+                </button>
               </div>
 
-              <div className="flex flex-col flex-1 px-6 py-6 md:px-12 md:py-16 pb-32 md:pb-16 mt-4 sm:mt-0">
-                <div className="mb-8 md:mb-10 pr-12">
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex flex-wrap gap-1.5">
-                      {selectedProduct.is_new && (
-                        <span className="bg-blue-50 text-blue-600 px-2 py-0.5 text-[8px] font-bold uppercase tracking-widest rounded-md border border-blue-100/50">
-                          New
-                        </span>
-                      )}
-                      {selectedProduct.is_bestseller && (
-                        <span className="bg-amber-50 text-amber-600 px-2 py-0.5 text-[8px] font-bold uppercase tracking-widest rounded-md border border-amber-100/50">
-                          Best
-                        </span>
-                      )}
-                      {selectedProduct.is_trending && (
-                        <span className="bg-purple-50 text-purple-600 px-2 py-0.5 text-[8px] font-bold uppercase tracking-widest rounded-md border border-purple-100/50">
-                          Trend
-                        </span>
-                      )}
-                    </div>
+              <h2
+                id="product-dialog-title"
+                className="text-2xl md:text-3xl font-light tracking-tight leading-snug mb-4 text-stone-900"
+              >
+                {selectedProduct.name}
+              </h2>
 
-                    <button
-                      type="button"
-                      onClick={handleShareLink}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#fbfbfd] hover:bg-neutral-100 text-neutral-500 hover:text-black transition-colors border border-black/5 outline-none shrink-0 cursor-pointer"
-                    >
-                      {isCopied ? (
-                        <Check size={12} strokeWidth={2.5} className="text-green-600" />
-                      ) : (
-                        <LinkIcon size={12} strokeWidth={2} />
-                      )}
-                      <span
-                        className={`text-[9px] font-bold uppercase tracking-[0.1em] ${isCopied ? 'text-green-600' : ''}`}
-                      >
-                        {isCopied ? 'Copied' : 'Share'}
-                      </span>
-                    </button>
-                  </div>
-
-                  <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-neutral-400 mb-2 block">
-                    {selectedProduct.collection || 'Core Collection'}
-                  </p>
-
-                  <h2 className="text-3xl md:text-4xl font-light tracking-tight leading-snug mb-4 text-black">
-                    {selectedProduct.name}
-                  </h2>
-
-                  <div className="flex items-center gap-3">
-                    {selectedProduct.discount_percentage ? (
-                      <>
-                        <span className="text-xl font-normal text-red-500 tracking-wider">
-                          ₹{currentItemPrice.toLocaleString('en-IN')}
-                        </span>
-                        <span className="text-sm font-medium text-neutral-300 line-through tracking-wider">
-                          ₹{selectedProduct.price.toLocaleString('en-IN')}
-                        </span>
-                        <span className="text-[9px] font-bold text-red-500 uppercase tracking-widest bg-red-50 px-2 py-1 rounded-md border border-red-100">
-                          -{selectedProduct.discount_percentage}% OFF
-                        </span>
-                      </>
-                    ) : (
-                      <span className="text-xl font-normal text-neutral-500 tracking-wider">
-                        ₹{selectedProduct.price.toLocaleString('en-IN')}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                <div className="prose prose-sm text-neutral-500 font-light leading-relaxed mb-8 md:mb-12 text-sm tracking-wide">
-                  <p>
-                    {selectedProduct.description ||
-                      'A quintessential luxury garment, engineered with precision and crafted from the finest sustainably sourced materials. Designed to drape perfectly while maintaining structural integrity.'}
-                  </p>
-                </div>
-
-                <div className="mt-auto md:mt-auto pt-4 border-t border-black/5 md:border-none">
-                  {selectedProduct.canvas_state && (
-                    <div className="flex justify-between items-center mb-6 border-b border-black/5 pb-6">
-                      <div className="flex items-center bg-[#fbfbfd] border border-black/5 rounded-full p-1 w-full max-w-[320px]">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedFit('tshirtman')}
-                          className={`flex-1 py-1.5 text-[9px] uppercase tracking-widest font-bold rounded-full transition-all outline-none cursor-pointer ${
-                            selectedFit === 'tshirtman'
-                              ? 'bg-black text-white shadow-sm font-bold'
-                              : 'text-neutral-400 font-medium hover:text-black'
-                          }`}
-                        >
-                          Men's
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedFit('tshirtwoman')}
-                          className={`flex-1 py-1.5 text-[9px] uppercase tracking-widest font-bold rounded-full transition-all outline-none cursor-pointer ${
-                            selectedFit === 'tshirtwoman'
-                              ? 'bg-black text-white shadow-sm font-bold'
-                              : 'text-neutral-400 font-medium hover:text-black'
-                          }`}
-                        >
-                          Women's
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedFit('tshirtoversized')}
-                          className={`flex-1 py-1.5 text-[9px] uppercase tracking-widest font-bold rounded-full transition-all outline-none cursor-pointer ${
-                            selectedFit === 'tshirtoversized'
-                              ? 'bg-black text-white shadow-sm font-bold'
-                              : 'text-neutral-400 font-medium hover:text-black'
-                          }`}
-                        >
-                          Oversized
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex justify-between items-center mb-6">
-                    <span className="text-xs font-medium tracking-widest uppercase text-black">
-                      Select Size
+              <div className="flex items-center gap-3 mb-8">
+                {selectedProduct.discount_percentage && selectedProduct.discount_percentage > 0 ? (
+                  <>
+                    <span className="text-lg font-light text-stone-900 tracking-wide">
+                      ₹{currentItemPrice.toLocaleString('en-IN')}
                     </span>
-                    <span className="text-[10px] uppercase tracking-widest text-neutral-400 cursor-pointer hover:text-black transition-colors underline underline-offset-4">
-                      Size Guide
+                    <span className="text-sm font-light text-stone-400 line-through tracking-wide">
+                      ₹{selectedProduct.price.toLocaleString('en-IN')}
+                    </span>
+                    <span className="text-[9px] font-medium text-stone-900 uppercase tracking-widest ml-2">
+                      -{selectedProduct.discount_percentage}%
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-lg font-light text-stone-500 tracking-wide">
+                    ₹{selectedProduct.price.toLocaleString('en-IN')}
+                  </span>
+                )}
+              </div>
+
+              {selectedProduct.description && (
+                <div className="prose prose-sm text-stone-500 font-light leading-relaxed mb-12 text-sm tracking-wide">
+                  <p>{selectedProduct.description}</p>
+                </div>
+              )}
+
+              <div className="mt-auto">
+                {selectedProduct.canvas_state && (
+                  <div className="mb-10">
+                    <span className="text-[9px] font-medium tracking-[0.2em] uppercase text-stone-400 block mb-4">
+                      Fit
+                    </span>
+                    <div className="flex items-center gap-6">
+                      {FIT_OPTIONS.map((fit) => (
+                        <button
+                          key={fit}
+                          type="button"
+                          aria-pressed={drawerFit === fit}
+                          onClick={() => setDrawerFit(fit)}
+                          className={`text-[10px] uppercase tracking-[0.15em] transition-all outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm cursor-pointer pb-1 border-b ${
+                            drawerFit === fit
+                              ? 'text-stone-900 border-stone-900 font-medium'
+                              : 'text-stone-400 border-transparent hover:text-stone-600'
+                          }`}
+                        >
+                          {FIT_LABELS[fit]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="mb-10">
+                  <div className="flex justify-between items-center mb-4">
+                    <span className="text-[9px] font-medium tracking-[0.2em] uppercase text-stone-400">
+                      Size
                     </span>
                   </div>
-
-                  <div className="grid grid-cols-6 gap-2 mb-6">
+                  <div className="flex flex-wrap gap-4">
                     {['XS', 'S', 'M', 'L', 'XL', 'XXL'].map((size) => {
                       const qty = selectedSizes[size] || 0;
                       const isFocused = focusedSize === size;
@@ -864,19 +1051,21 @@ export function Marketplace() {
                         <button
                           key={size}
                           type="button"
+                          aria-label={`${size} size, ${qty} selected`}
                           onClick={(e) => handleSizeLeftClick(e, size)}
                           onContextMenu={(e) => handleSizeRightClick(e, size)}
                           onTouchStart={() => handleTouchStart(size)}
+                          onTouchCancel={handleTouchCancel}
                           onTouchEnd={handleTouchEnd}
-                          className={`relative h-14 flex items-center justify-center text-[13px] font-medium transition-all outline-none border-b-2 select-none touch-none cursor-pointer ${
+                          className={`relative h-10 min-w-10 px-2 flex items-center justify-center text-[11px] transition-all outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm cursor-pointer border-b ${
                             isFocused
-                              ? 'border-black text-black bg-neutral-50/50'
-                              : 'border-transparent text-neutral-400 hover:text-black hover:border-black/20'
+                              ? 'border-stone-900 text-stone-900 font-medium'
+                              : 'border-transparent text-stone-400 hover:text-stone-900'
                           }`}
                         >
                           {size}
                           {qty > 0 && (
-                            <span className="absolute top-1 right-2 w-3.5 h-3.5 bg-black text-white text-[8px] font-bold flex items-center justify-center rounded-full shadow-sm animate-in zoom-in border border-white">
+                            <span className="absolute -top-1 -right-2 text-[9px] font-bold text-stone-900">
                               {qty}
                             </span>
                           )}
@@ -884,52 +1073,54 @@ export function Marketplace() {
                       );
                     })}
                   </div>
+                </div>
 
-                  <div className="flex items-center justify-between px-5 py-4 bg-[#fbfbfd] border border-black/[0.04] rounded-2xl mb-8 md:mb-10 transition-all">
-                    <span className="text-[10px] font-medium uppercase tracking-widest text-neutral-500">
-                      Quantity <span className="text-black font-bold ml-1">({focusedSize})</span>
+                <div className="flex items-center justify-between mb-12">
+                  <span className="text-[9px] font-medium uppercase tracking-[0.2em] text-stone-400">
+                    Quantity <span className="text-stone-900 ml-1">({focusedSize})</span>
+                  </span>
+                  <div className="flex items-center gap-6 text-stone-900">
+                    <button
+                      type="button"
+                      onClick={() => updateLocalSize(focusedSize, -1)}
+                      disabled={selectedSizes[focusedSize] === 0}
+                      className="hover:opacity-50 disabled:opacity-20 outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm transition-opacity cursor-pointer"
+                    >
+                      <Minus size={14} strokeWidth={1} />
+                    </button>
+                    <span className="text-sm font-light w-4 text-center">
+                      {selectedSizes[focusedSize] || 0}
                     </span>
-                    <div className="flex items-center gap-6 text-black">
-                      <button
-                        type="button"
-                        onClick={() => updateLocalSize(focusedSize, -1)}
-                        disabled={selectedSizes[focusedSize] === 0}
-                        className="hover:opacity-50 disabled:opacity-20 outline-none p-1.5 transition-opacity bg-white rounded-md shadow-sm border border-black/5 cursor-pointer"
-                        aria-label="Decrease quantity"
-                      >
-                        <Minus size={14} strokeWidth={1.5} />
-                      </button>
-                      <span className="text-sm font-semibold w-6 text-center">
-                        {selectedSizes[focusedSize] || 0}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => updateLocalSize(focusedSize, 1)}
-                        className="hover:opacity-50 outline-none p-1.5 transition-opacity bg-white rounded-md shadow-sm border border-black/5 cursor-pointer"
-                        aria-label="Increase quantity"
-                      >
-                        <Plus size={14} strokeWidth={1.5} />
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => updateLocalSize(focusedSize, 1)}
+                      className="hover:opacity-50 outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm transition-opacity cursor-pointer"
+                    >
+                      <Plus size={14} strokeWidth={1} />
+                    </button>
                   </div>
+                </div>
 
+                <button
+                  type="button"
+                  onClick={confirmAddToCart}
+                  disabled={totalQty === 0 || isAdding}
+                  className="w-full h-14 bg-stone-950 hover:bg-stone-800 disabled:bg-stone-200 disabled:text-stone-400 text-white font-medium uppercase tracking-[0.2em] text-[10px] rounded-sm transition-all flex items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-stone-900/50 focus-visible:ring-offset-2 cursor-pointer"
+                >
+                  {isAdding ? 'Added' : `Add To Bag — ₹${totalPrice.toLocaleString('en-IN')}`}
+                </button>
+
+                <div className="w-full flex justify-center mt-6">
                   <button
                     type="button"
-                    onClick={confirmAddToCart}
-                    disabled={totalQty === 0 || isAdding}
-                    className="w-full h-14 bg-black hover:bg-neutral-800 disabled:bg-neutral-100 disabled:text-neutral-400 text-white font-normal uppercase tracking-[0.2em] text-[11px] rounded-full transition-all flex items-center justify-center outline-none shadow-lg cursor-pointer"
+                    onClick={() => {
+                      handleCloseProduct();
+                      navigate('/editor');
+                    }}
+                    className="text-[9px] text-stone-400 hover:text-stone-900 font-medium uppercase tracking-[0.2em] transition-colors outline-none focus-visible:text-stone-900 focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm pb-1 border-b border-transparent hover:border-stone-900"
                   >
-                    {isAdding ? (
-                      <span className="flex items-center gap-3">
-                        <Check size={18} strokeWidth={1.5} /> Added To Bag
-                      </span>
-                    ) : (
-                      `Add To Bag - ₹${totalPrice.toLocaleString('en-IN')}`
-                    )}
+                    Take it into Studio
                   </button>
-                  <p className="text-[9px] text-center text-neutral-400 mt-6 font-medium uppercase tracking-widest">
-                    Complimentary Shipping & Returns
-                  </p>
                 </div>
               </div>
             </div>
@@ -937,166 +1128,280 @@ export function Marketplace() {
         </div>
       )}
 
-      <header className="h-[70px] bg-white/95 backdrop-blur-md border-b border-black/[0.04] flex items-center justify-between px-5 sm:px-6 lg:px-12 shrink-0 z-40 sticky top-0">
-        <Link to="/" className="hover:opacity-60 transition-opacity outline-none">
+      {/* PINNED LUXURY HEADER */}
+      <header className="fixed top-0 left-0 right-0 z-50 w-full h-[56px] md:h-[60px] bg-[#FAFAFA]/95 backdrop-blur-md border-b border-stone-200/50 flex items-center justify-between px-6 lg:px-12 pointer-events-auto">
+        <Link
+          to="/"
+          className="hover:opacity-60 transition-opacity duration-300 outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm flex items-center h-full"
+        >
           <img
             src="/logo.png"
             alt={env.VITE_APP_NAME}
-            className="h-5 md:h-6 w-auto object-contain"
+            className="h-3.5 md:h-4 w-auto object-contain brightness-0"
           />
         </Link>
 
-        <div className="flex items-center gap-5 sm:gap-6 md:gap-8">
+        <div ref={headerActionsRef} className="flex items-center gap-4 md:gap-6 h-full relative">
+          <button
+            type="button"
+            aria-label="Search collection"
+            onClick={() => toggleDropdown('search')}
+            className={`transition-colors outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm p-1 ${activeDropdown === 'search' ? 'text-stone-900' : 'text-stone-400 hover:text-stone-900'}`}
+          >
+            <Search size={16} strokeWidth={1.5} />
+          </button>
+
+          <button
+            type="button"
+            aria-label="Choose model"
+            onClick={() => toggleDropdown('fit')}
+            className={`transition-colors outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm p-1 ${activeDropdown === 'fit' ? 'text-stone-900' : 'text-stone-400 hover:text-stone-900'}`}
+          >
+            <Shirt size={16} strokeWidth={1.5} />
+          </button>
+
+          <button
+            type="button"
+            aria-label="Surprise me"
+            onClick={() => toggleDropdown('surprise')}
+            className={`transition-colors outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm p-1 ${activeDropdown === 'surprise' ? 'text-stone-900' : 'text-stone-400 hover:text-stone-900'}`}
+          >
+            <Sparkles size={16} strokeWidth={1.5} />
+          </button>
+
+          <div className="w-px h-3 bg-stone-300" />
+
           <Link
             to="/editor"
-            className="text-[10px] font-medium uppercase tracking-[0.15em] text-neutral-500 hover:text-black transition-colors outline-none"
+            className="text-[10px] font-medium uppercase tracking-[0.2em] text-stone-400 hover:text-stone-900 transition-colors outline-none focus-visible:text-stone-900 focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm p-1 flex items-center gap-1.5"
           >
-            Studio
+            <Wand2 size={16} strokeWidth={1.5} className="sm:hidden" />
+            <span className="hidden sm:block">Studio</span>
           </Link>
 
           {isAuthenticated ? (
             <Link
               to="/dashboard"
-              className="text-[10px] font-medium uppercase tracking-[0.15em] text-neutral-500 hover:text-black transition-colors outline-none"
+              className="text-[10px] font-medium uppercase tracking-[0.2em] text-stone-400 hover:text-stone-900 transition-colors outline-none focus-visible:text-stone-900 focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm p-1 flex items-center gap-1.5"
             >
-              Account
+              <User size={16} strokeWidth={1.5} className="sm:hidden" />
+              <span className="hidden sm:block">Account</span>
             </Link>
           ) : (
             <button
               type="button"
               onClick={openAuthModal}
-              className="text-[10px] font-medium uppercase tracking-[0.15em] text-neutral-500 hover:text-black transition-colors flex items-center outline-none cursor-pointer"
+              className="text-[10px] font-medium uppercase tracking-[0.2em] text-stone-400 hover:text-stone-900 transition-colors outline-none focus-visible:text-stone-900 focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm p-1 cursor-pointer flex items-center gap-1.5"
             >
-              Sign In
+              <User size={16} strokeWidth={1.5} className="sm:hidden" />
+              <span className="hidden sm:block">Sign In</span>
             </button>
           )}
 
-          <div className="w-px h-3 bg-neutral-200 hidden sm:block" />
-
           <Link
             to="/checkout"
-            className={`relative flex items-center justify-center p-1 transition-all duration-300 outline-none ${cartAnim ? 'scale-110' : 'hover:opacity-60'}`}
+            aria-label="Shopping Bag"
+            className={`relative flex items-center justify-center p-1 transition-transform duration-300 outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm text-stone-900 ${_cartAnim ? 'scale-125' : 'hover:scale-110'}`}
           >
-            <ShoppingBag size={20} strokeWidth={1.5} className="text-black" />
+            <ShoppingBag size={16} strokeWidth={1.5} />
             {totalCartItems > 0 && (
-              <span className="absolute -top-1.5 -right-2 bg-black text-white text-[9px] font-bold min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center border-[2px] border-white shadow-sm">
+              <span className="absolute -top-1.5 -right-2 text-[9px] font-bold min-w-4.5 h-4.5 px-1 rounded-full flex items-center justify-center border-2 bg-stone-900 text-white border-[#FAFAFA]">
                 {totalCartItems}
               </span>
             )}
           </Link>
+
+          {/* POPOVERS */}
+          {activeDropdown === 'search' && (
+            <div className="absolute top-[120%] right-0 w-[280px] bg-[#FAFAFA]/95 backdrop-blur-md border border-stone-200 shadow-xl p-5 animate-in slide-in-from-top-2 fade-in duration-200 cursor-default rounded-sm">
+              <div className="flex flex-col gap-4">
+                <span className="text-[9px] font-medium uppercase tracking-[0.2em] text-stone-400">
+                  Search the collection
+                </span>
+                <div className="flex items-center gap-3 border-b border-stone-300 pb-1 focus-within:border-stone-900 transition-colors">
+                  <Search size={14} strokeWidth={1.5} className="text-stone-400 shrink-0" />
+                  <input
+                    ref={searchInputRef}
+                    type="text"
+                    aria-label="Search the collection"
+                    placeholder="Find a piece..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="bg-transparent border-none text-[10px] uppercase tracking-[0.15em] outline-none w-full text-stone-900 placeholder:text-stone-400"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="text-stone-400 hover:text-stone-900 outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeDropdown === 'fit' && (
+            <div className="absolute top-[120%] right-0 w-[240px] bg-[#FAFAFA]/95 backdrop-blur-md border border-stone-200 shadow-xl p-5 animate-in slide-in-from-top-2 fade-in duration-200 cursor-default rounded-sm">
+              <span className="text-[9px] font-medium uppercase tracking-[0.2em] text-stone-400 block mb-4">
+                Fit
+              </span>
+              <div className="flex flex-col gap-3">
+                {FIT_OPTIONS.map((fit) => (
+                  <button
+                    key={fit}
+                    type="button"
+                    aria-pressed={globalFit === fit}
+                    onClick={() => {
+                      setGlobalFit(fit);
+                      setActiveDropdown(null);
+                    }}
+                    className={`text-[10px] uppercase tracking-[0.15em] transition-colors pb-1 border-b text-left w-full outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm ${
+                      globalFit === fit
+                        ? 'text-stone-900 border-stone-900 font-medium'
+                        : 'text-stone-400 border-transparent hover:text-stone-900'
+                    }`}
+                  >
+                    {FIT_LABELS[fit]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {activeDropdown === 'surprise' && (
+            <div className="absolute top-[120%] right-0 w-[280px] bg-[#FAFAFA]/95 backdrop-blur-md border border-stone-200 shadow-xl p-6 animate-in slide-in-from-top-2 fade-in duration-200 cursor-default rounded-sm flex flex-col gap-4 text-center">
+              <span className="text-[9px] font-medium uppercase tracking-[0.2em] text-stone-400">
+                Inspire Me
+              </span>
+              <p className="text-sm font-serif italic text-stone-600">
+                Explore an unexpected curation of pieces from our archive.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  fetchRandomItems();
+                  setActiveDropdown(null);
+                }}
+                className="mt-2 w-full py-3 bg-stone-900 hover:bg-stone-800 text-white font-medium uppercase tracking-[0.2em] text-[9px] transition-colors rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-stone-900/50 focus-visible:ring-offset-2"
+              >
+                Discover something unexpected
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
-      <div className="w-full bg-white/95 backdrop-blur-md border-b border-black/[0.04] sticky top-[70px] z-30 shadow-[0_4px_20px_rgba(0,0,0,0.02)]">
-        <div className="max-w-[1600px] mx-auto px-6 lg:px-12 py-3 sm:py-0 sm:h-14 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-6 overflow-x-auto hide-scrollbar w-full sm:w-auto pb-1 sm:pb-0">
+      {/* CATEGORY BAR */}
+      <div className="w-full bg-[#FAFAFA]/95 backdrop-blur-md border-b border-stone-200/40 sticky top-[56px] md:top-[60px] z-40">
+        <div className="max-w-[1600px] mx-auto px-6 lg:px-12 py-4 flex overflow-x-auto custom-scrollbar">
+          <div className="flex items-center gap-8">
             {collections.map((cat) => (
               <button
                 key={cat}
                 type="button"
+                aria-pressed={activeCategory === cat}
                 onClick={() => setActiveCategory(cat)}
-                className={`text-[10px] uppercase tracking-[0.15em] whitespace-nowrap outline-none transition-colors cursor-pointer ${
+                className={`text-[9px] uppercase tracking-[0.2em] whitespace-nowrap outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm transition-colors cursor-pointer pb-1 border-b ${
                   activeCategory === cat
-                    ? 'font-bold text-black border-b border-black pb-1'
-                    : 'font-medium text-neutral-400 hover:text-black'
+                    ? 'font-medium text-stone-900 border-stone-900'
+                    : 'font-normal text-stone-400 border-transparent hover:text-stone-900'
                 }`}
               >
                 {cat}
               </button>
             ))}
           </div>
-
-          <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto mt-2 sm:mt-0 overflow-x-auto hide-scrollbar pb-1 sm:pb-0">
-            <button
-              type="button"
-              onClick={fetchRandomItems}
-              className={`flex items-center justify-center w-8 h-8 rounded-full transition-all outline-none shrink-0 cursor-pointer ${
-                isShuffleMode
-                  ? 'bg-black text-white shadow-md'
-                  : 'bg-[#fbfbfd] border border-black/[0.03] text-black hover:bg-white hover:shadow-sm'
-              }`}
-              aria-label="Surprise Me"
-            >
-              <Sparkles size={13} strokeWidth={2} />
-            </button>
-
-            <div className="flex items-center gap-3 bg-[#fbfbfd] border border-black/[0.03] px-4 py-2 rounded-full w-full sm:w-56 lg:w-72 focus-within:bg-white focus-within:shadow-sm focus-within:border-black/10 transition-all duration-300">
-              <Search size={14} strokeWidth={1.5} className="text-neutral-400 shrink-0" />
-              <input
-                type="text"
-                placeholder="Search pieces..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="bg-transparent border-none text-[10px] uppercase tracking-[0.15em] outline-none w-full text-black placeholder:text-neutral-400 font-medium"
-              />
-            </div>
-          </div>
         </div>
       </div>
 
-      <main className="flex-1 overflow-y-auto overflow-x-hidden w-full relative bg-white">
-        <div className="max-w-[1600px] mx-auto px-6 lg:px-12 py-10 pb-32">
+      {/* MAIN GRID */}
+      <main className="flex-1 w-full relative">
+        <div className="w-full h-24 md:h-36 shrink-0" />
+
+        <div className="max-w-[1600px] mx-auto px-6 lg:px-12 pb-48">
           {isLoading && items.length === 0 ? (
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-4 gap-y-16 sm:gap-x-12 sm:gap-y-24">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-16 lg:gap-x-10 lg:gap-y-24">
               {skeletonKeys.map((key) => (
-                <div key={key} className="w-full flex flex-col items-center">
-                  <div className="w-full aspect-[4/5] bg-[#f8f8f8] animate-pulse rounded-2xl mb-6" />
-                  <div className="w-3/4 h-3 bg-[#f8f8f8] animate-pulse rounded-full mb-3" />
-                  <div className="w-1/2 h-3 bg-[#f8f8f8] animate-pulse rounded-full" />
+                <div key={key} className="w-full flex flex-col">
+                  <div className="w-full aspect-[4/5] bg-stone-100 animate-pulse mb-4" />
+                  <div className="w-3/4 h-2 bg-stone-100 animate-pulse mb-2" />
+                  <div className="w-1/4 h-2 bg-stone-100 animate-pulse" />
                 </div>
               ))}
             </div>
-          ) : !isLoading && items.length === 0 ? (
+          ) : !isLoading && !hasVisibleProducts ? (
             <div className="py-40 flex flex-col items-center justify-center text-center">
-              <SlidersHorizontal size={32} strokeWidth={1} className="text-neutral-300 mb-6" />
-              <p className="text-neutral-500 font-light text-sm tracking-widest uppercase mb-4">
-                No pieces found.
-              </p>
-              <button
-                type="button"
-                onClick={() => {
-                  setSearchQuery('');
-                  setActiveCategory('All');
-                }}
-                className="text-[10px] font-medium uppercase tracking-widest text-black border-b border-black outline-none cursor-pointer"
-              >
-                Clear Filters
-              </button>
+              <SlidersHorizontal size={24} strokeWidth={1} className="text-stone-300 mb-6" />
+              {searchQuery ? (
+                <>
+                  <p className="text-[9px] uppercase tracking-[0.2em] text-stone-400 mb-6">
+                    Nothing matched your search.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="text-[9px] font-medium uppercase tracking-[0.2em] text-stone-900 border-b border-stone-900 pb-1 outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm cursor-pointer"
+                  >
+                    Clear Search
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="text-[9px] uppercase tracking-[0.2em] text-stone-400 mb-6">
+                    We haven't imagined this yet. But you can.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigate('/editor');
+                    }}
+                    className="text-[9px] font-medium uppercase tracking-[0.2em] text-stone-900 border-b border-stone-900 pb-1 outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm cursor-pointer"
+                  >
+                    Open Studio
+                  </button>
+                </>
+              )}
             </div>
           ) : (
             <>
-              {!isShuffleMode &&
-                activeCategory === 'All' &&
-                !debouncedSearch &&
-                spotlightItems.length > 0 && (
-                  <div className="mb-20 animate-in fade-in duration-700">
-                    <div className="flex items-center gap-4 mb-8">
-                      <h2 className="text-[10px] font-bold uppercase tracking-[0.25em] text-black">
-                        Curated Spotlight
-                      </h2>
-                      <div className="h-px flex-1 bg-black/[0.03]" />
-                    </div>
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-16 sm:gap-x-12">
-                      {spotlightItems.map((product) => (
-                        <ProductCard
-                          key={`spotlight-${product.id}`}
-                          product={product}
-                          onOpen={handleOpenProduct}
-                          selectedFit={selectedFit}
-                        />
-                      ))}
-                    </div>
-                    <div className="w-full h-px bg-black/[0.03] mt-20" />
+              {/* EDITORIAL SPOTLIGHT / SELECTED */}
+              {shouldShowSpotlight && (
+                <div className="mb-24 animate-in fade-in duration-1000">
+                  <div className="flex flex-col items-start justify-between mb-12 pr-12">
+                    <h2 className="text-[9px] font-medium uppercase tracking-[0.2em] text-stone-900">
+                      Selected
+                    </h2>
+                    <p className="text-sm font-serif italic text-stone-500 mt-2">
+                      Things we've imagined.
+                    </p>
                   </div>
-                )}
 
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-4 gap-y-16 sm:gap-x-12 sm:gap-y-24">
-                {items.map((product) => (
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-16 lg:gap-x-10 lg:gap-y-24">
+                    {spotlightItems.map((product, index) => (
+                      <ProductCard
+                        key={`spotlight-${product.id}`}
+                        product={product}
+                        onOpen={handleOpenProduct}
+                        selectedFit={globalFit}
+                        priority={index < 4}
+                      />
+                    ))}
+                  </div>
+                  <div className="w-full h-px bg-stone-200 mt-24" />
+                </div>
+              )}
+
+              {/* REGULAR ARCHIVE GRID */}
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-16 lg:gap-x-10 lg:gap-y-24">
+                {archiveItems.map((product) => (
                   <ProductCard
                     key={`grid-${product.id}`}
                     product={product}
                     onOpen={handleOpenProduct}
-                    selectedFit={selectedFit}
+                    selectedFit={globalFit}
                   />
                 ))}
               </div>
@@ -1104,23 +1409,11 @@ export function Marketplace() {
               {!isShuffleMode && (
                 <div
                   ref={observerTarget}
-                  className="w-full py-16 mt-8 flex flex-col items-center justify-center"
+                  className="w-full py-24 mt-12 flex flex-col items-center justify-center"
                 >
                   {isLoadingMore && (
-                    <div className="flex flex-col items-center text-neutral-400">
-                      <Loader2 size={24} className="animate-spin mb-3" />
-                      <span className="text-[9px] font-bold uppercase tracking-[0.2em]">
-                        Loading More Pieces
-                      </span>
-                    </div>
-                  )}
-                  {!hasMore && items.length > 0 && (
-                    <div className="flex items-center gap-4 w-full max-w-md opacity-40">
-                      <div className="h-px flex-1 bg-black" />
-                      <span className="text-[9px] font-bold uppercase tracking-[0.3em] text-black">
-                        End of Collection
-                      </span>
-                      <div className="h-px flex-1 bg-black" />
+                    <div className="flex flex-col items-center text-stone-400">
+                      <Loader2 size={16} className="animate-spin mb-4" />
                     </div>
                   )}
                 </div>
@@ -1130,7 +1423,17 @@ export function Marketplace() {
         </div>
       </main>
 
-      <AuthModal />
+      {/* MINIMALIST FOOTER */}
+      <footer className="py-24 px-6 lg:px-12 bg-[#FAFAFA] flex flex-col items-center justify-center text-center space-y-8 border-t border-stone-200">
+        <img
+          src="/logo.png"
+          alt={env.VITE_APP_NAME}
+          className="h-4 md:h-5 w-auto object-contain brightness-0 transition-transform duration-700 hover:scale-[1.02]"
+        />
+        <p className="text-[9px] font-medium text-stone-400 tracking-[0.3em] uppercase pt-2">
+          © {new Date().getFullYear()} {env.VITE_APP_NAME} STUDIOS.
+        </p>
+      </footer>
     </div>
   );
 }

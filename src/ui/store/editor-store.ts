@@ -729,7 +729,7 @@ export const getDefaultConfig = (_type: ToolType): Partial<DecalData> => ({
   squeezeX: 1,
   squeezeY: 1,
   scale: 0.2,
-  zDepth: 0.5, // FIX: High depth guarantees immediate visibility on spawn
+  zDepth: 0.8, // FIX: High depth guarantees immediate visibility on spawn
   angleLimit: 85,
   cropX: 0,
   cropY: 0,
@@ -961,7 +961,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       src,
       originalSrc: type === 'image' || type === 'drawing' ? src : undefined,
       // FIX: Force safe chest projection coordinates upon instantiation
-      position: overrides?.position || [0, 0.05, 0.15],
+      position: overrides?.position || [0, 0, 0],
       rotation: overrides?.rotation || [0, 0, 0],
       ...defaultConfig,
       ...overrides,

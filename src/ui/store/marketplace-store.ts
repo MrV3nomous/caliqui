@@ -39,6 +39,8 @@ interface MarketplaceState {
   fetchItems: (category: string, query: string, page: number) => Promise<void>;
   incrementPopularity: (id: string) => Promise<void>;
   setSortBy: (sort: 'trending' | 'newest') => void;
+  // Properly typed signature for deep-link resolution
+  fetchItemById: (id: string) => Promise<MarketplaceItem | null>;
 }
 
 export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
@@ -209,6 +211,28 @@ export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
     } else {
       console.error('Failed to load marketplace items:', error);
       set({ isLoading: false, isLoadingMore: false });
+    }
+  },
+
+  // 6. Deep link individual item resolver
+  fetchItemById: async (id: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('marketplace_items')
+        .select('*')
+        .eq('id', id)
+        .eq('is_active', true)
+        .single();
+
+      if (error) {
+        console.error('Failed to fetch individual item:', error);
+        return null;
+      }
+
+      return data as MarketplaceItem;
+    } catch (e) {
+      console.error('Error in fetchItemById:', e);
+      return null;
     }
   },
 }));

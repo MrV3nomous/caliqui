@@ -105,7 +105,7 @@ export function Mini3DViewerStatic({
   return (
     <div
       ref={containerRef}
-      className="absolute inset-0 w-full h-full bg-[#f8f8f8] overflow-hidden rounded-2xl select-none"
+      className="absolute inset-0 w-full h-full bg-transparent overflow-hidden select-none"
     >
       <button
         type="button"
@@ -129,7 +129,7 @@ export function Mini3DViewerStatic({
               antialias: false,
               powerPreference: 'low-power',
             }}
-            camera={{ position: [0, 0, 4.5], fov: 45 }}
+            camera={{ position: [0, -0.05, 4.0], fov: 35 }}
             className="w-full h-full outline-none"
           >
             <ambientLight intensity={0.35} />
@@ -163,7 +163,13 @@ export function Mini3DViewerStatic({
 
             <Suspense fallback={null}>
               <Bvh firstHitOnly>
+                {/* 
+                  The performance fix: the key is now strictly on the internal mesh component.
+                  This preserves the heavy Canvas and Environment context above, 
+                  only remounting the geometry when the user changes the global Fit.
+                */}
                 <StaticModel
+                  key={apparelModel}
                   decals={(canvasState || []) as unknown as DecalData[]}
                   color={tshirtColor}
                   apparelModel={apparelModel}
@@ -245,6 +251,7 @@ function StaticModel({
         clonedMesh.geometry = child.geometry.clone();
         clonedMesh.geometry.applyMatrix4(child.matrixWorld);
         clonedMesh.geometry.scale(MODEL_SCALE, MODEL_SCALE, MODEL_SCALE);
+
         clonedMesh.position.set(0, 0, 0);
         clonedMesh.rotation.set(0, 0, 0);
         clonedMesh.scale.set(1, 1, 1);
@@ -487,7 +494,6 @@ function SafeTextureStaticDecal({
     `.replace(
       `#include <alphatest_fragment>`,
       `#include <alphatest_fragment>
-       // FIX: Added abs() to dot product for pass-through visibility on opposite side
        float dotP = abs(dot(normalize(vWorldNormalCustom), uProjectorDir));
        if (dotP < uAngleLimit) {
            discard;
@@ -525,7 +531,6 @@ function SafeTextureStaticDecal({
                 key={`decal-${decal.id}-${mesh.name}`}
                 mesh={{ current: mesh } as React.RefObject<THREE.Mesh>}
                 position={position}
-                // FIX: Changed finalRotation back to rotation for Static mode compatibility
                 rotation={rotation}
                 scale={scale}
                 renderOrder={index + 1}
@@ -539,7 +544,6 @@ function SafeTextureStaticDecal({
             <Decal
               mesh={{ current: activeMesh } as React.RefObject<THREE.Mesh>}
               position={position}
-              // FIX: Changed finalRotation back to rotation for Static mode compatibility
               rotation={rotation}
               scale={scale}
               renderOrder={index + 1}

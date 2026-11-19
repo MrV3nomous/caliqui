@@ -69,14 +69,14 @@ export function ContextMenu() {
     // biome-ignore lint/a11y/noStaticElementInteractions: Custom context menu overlay
     <div
       ref={menuRef}
-      className="absolute z-50 w-48 bg-white border border-neutral-200 rounded-lg shadow-xl py-1 text-sm text-neutral-700 animate-in fade-in zoom-in duration-150"
+      className="studio-context-menu absolute z-50 w-48 rounded-lg shadow-xl py-1 text-sm animate-in fade-in zoom-in duration-150"
       style={{ top: contextMenu.y, left: contextMenu.x }}
       onContextMenu={(e) => e.preventDefault()} // Prevent native browser menu
     >
       {isDrawing && (
         <button
           type="button"
-          className="w-full flex items-center gap-2 px-3 py-2 hover:bg-blue-50 hover:text-blue-600 transition-colors font-medium text-blue-700"
+          className="w-full flex items-center gap-2 px-3 py-2 studio-context-action transition-colors font-medium"
           onClick={() =>
             handleAction(() => {
               setEditingDrawingId(contextMenu.decalId);
@@ -91,7 +91,7 @@ export function ContextMenu() {
       {canGroup && (
         <button
           type="button"
-          className="w-full flex items-center gap-2 px-3 py-2 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+          className="w-full flex items-center gap-2 px-3 py-2 studio-context-action transition-colors"
           onClick={() => handleAction(groupSelected)}
         >
           <Group size={14} /> Group Items
@@ -101,14 +101,14 @@ export function ContextMenu() {
         <>
           <button
             type="button"
-            className="w-full flex items-center gap-2 px-3 py-2 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+            className="w-full flex items-center gap-2 px-3 py-2 studio-context-action transition-colors"
             onClick={() => handleAction(removeFromGroup)}
           >
             <Ungroup size={14} /> Remove from Group
           </button>
           <button
             type="button"
-            className="w-full flex items-center gap-2 px-3 py-2 hover:bg-red-50 text-red-600 transition-colors"
+            className="w-full flex items-center gap-2 px-3 py-2 studio-context-action studio-context-action--danger transition-colors"
             onClick={() => handleAction(breakGroup)}
           >
             <Ungroup size={14} className="text-red-500" /> Break Group
@@ -119,28 +119,28 @@ export function ContextMenu() {
 
       <button
         type="button"
-        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+        className="w-full flex items-center gap-2 px-3 py-2 studio-context-action transition-colors"
         onClick={() => handleAction(cut)}
       >
         <Scissors size={14} /> Cut
       </button>
       <button
         type="button"
-        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+        className="w-full flex items-center gap-2 px-3 py-2 studio-context-action transition-colors"
         onClick={() => handleAction(copy)}
       >
         <Copy size={14} /> Copy
       </button>
       <button
         type="button"
-        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+        className="w-full flex items-center gap-2 px-3 py-2 studio-context-action transition-colors"
         onClick={() => handleAction(paste)}
       >
         <ClipboardPaste size={14} /> Paste
       </button>
       <button
         type="button"
-        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+        className="w-full flex items-center gap-2 px-3 py-2 studio-context-action transition-colors"
         onClick={() => handleAction(duplicate)}
       >
         <CopyPlus size={14} /> Duplicate
@@ -150,14 +150,14 @@ export function ContextMenu() {
 
       <button
         type="button"
-        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+        className="w-full flex items-center gap-2 px-3 py-2 studio-context-action transition-colors"
         onClick={() => handleAction(() => moveLayerUp(contextMenu.decalId))}
       >
         <ArrowUpToLine size={14} /> Bring Forward
       </button>
       <button
         type="button"
-        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+        className="w-full flex items-center gap-2 px-3 py-2 studio-context-action transition-colors"
         onClick={() => handleAction(() => moveLayerDown(contextMenu.decalId))}
       >
         <ArrowDownToLine size={14} /> Send Backward
@@ -167,7 +167,7 @@ export function ContextMenu() {
 
       <button
         type="button"
-        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-red-50 text-red-600 transition-colors"
+        className="w-full flex items-center gap-2 px-3 py-2 studio-context-action studio-context-action--danger transition-colors"
         onClick={() => handleAction(deleteSelected)}
       >
         <Trash2 size={14} /> Delete

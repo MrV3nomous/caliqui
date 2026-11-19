@@ -33,7 +33,7 @@ import type {
   StoreMarketplaceItem,
 } from '@/ui/store/dashboard-store';
 import { useDashboardStore } from '@/ui/store/dashboard-store';
-import { useEditorStore } from '@/ui/store/editor-store';
+import { loadSavedDesignIntoEditor } from '@/shared/utils/design-loader';
 
 type Tab = 'orders' | 'designs' | 'addresses' | 'settings';
 
@@ -52,7 +52,6 @@ function CustomerItemCard({
   formatDate: (iso: string | undefined) => string;
 }) {
   const navigate = useNavigate();
-  const { init } = useEditorStore();
   const [showTracking, setShowTracking] = useState(false);
   const trackingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -133,32 +132,23 @@ function CustomerItemCard({
   const progressWidth = isDelivered ? 'w-full' : isShipped ? 'w-1/2' : 'w-0';
 
   // --- ITEM ROUTING NAVIGATION (BUG FIX 1: Proper Hydration) ---
-  const handleProductClick = () => {
+  const handleProductClick = async () => {
     if (item.type === 'marketplace') {
       navigate(`/marketplace?item=${item.product_id}`);
-    } else if (item.type === 'custom') {
-      const desItem = designs.find((d) => d.id === item.product_id);
-      if (desItem) {
-        try {
-          const existingStr = localStorage.getItem('caliqui_workspace');
-          const existing = existingStr ? JSON.parse(existingStr) : {};
+      return;
+    }
 
-          // Explicitly overwrite decals and model info so the editor doesn't load the "last used" state
-          const workspace = {
-            ...existing,
-            activeDesignId: desItem.id,
-            decals: desItem.canvas_state || [],
-            tshirtColor: desItem.tshirt_color || '#ffffff',
-            apparelModel: (desItem as { apparel_model?: string }).apparel_model || 'tshirtman',
-          };
+    if (item.type === 'custom') {
+      const design = designs.find((d) => d.id === item.product_id);
+      if (!design) return;
 
-          localStorage.setItem('caliqui_workspace', JSON.stringify(workspace));
-          init();
-        } catch (e) {
-          console.error(e);
-        }
+      try {
+        await loadSavedDesignIntoEditor(design);
+        navigate('/editor');
+      } catch (error) {
+        console.error('Failed to open saved design:', error);
+        window.alert('This design could not be opened. Please try again.');
       }
-      navigate('/editor');
     }
   };
 
@@ -371,7 +361,6 @@ export function Dashboard() {
     deleteDesign,
     updateProfile,
   } = useDashboardStore();
-  const { init } = useEditorStore();
   const { cart, addToCart } = useCheckoutStore();
 
   const [activeTab, setActiveTab] = useState<Tab>(() => {
@@ -406,12 +395,8 @@ export function Dashboard() {
     XL: 0,
     XXL: 0,
   });
-  const [focusedSize, setFocusedSize] = useState<string>('M');
   const [isAdding, setIsAdding] = useState(false);
   const [cartAnim, setCartAnim] = useState(false);
-
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isLongPress = useRef(false);
 
   useEffect(() => {
     localStorage.setItem('caliqui_dashboard_tab', activeTab);
@@ -456,77 +441,26 @@ export function Dashboard() {
     }));
   };
 
-  const handleSizeLeftClick = (e: React.MouseEvent, size: string) => {
-    e.preventDefault();
-    if (isLongPress.current) {
-      isLongPress.current = false;
-      return;
-    }
-    setFocusedSize(size);
-    updateLocalSize(size, 1);
-  };
-
-  const handleSizeRightClick = (e: React.MouseEvent, size: string) => {
-    e.preventDefault();
-    setFocusedSize(size);
-    updateLocalSize(size, -1);
-  };
-
-  const handleTouchStart = (size: string) => {
-    isLongPress.current = false;
-    longPressTimer.current = setTimeout(() => {
-      isLongPress.current = true;
-      setFocusedSize(size);
-      updateLocalSize(size, -1);
-    }, 500);
-  };
-
-  const handleTouchEnd = () => {
-    if (longPressTimer.current) clearTimeout(longPressTimer.current);
-  };
-
   // --- EXPLICIT HYDRATION FIX (Bug 1 & 2) ---
-  const handleEditDesign = (design: SavedDesign) => {
+  const handleEditDesign = async (design: SavedDesign) => {
     try {
-      const existingStr = localStorage.getItem('caliqui_workspace');
-      const existing = existingStr ? JSON.parse(existingStr) : {};
-
-      const workspace = {
-        ...existing,
-        activeDesignId: design.id,
-        decals: design.canvas_state || [],
-        tshirtColor: design.tshirt_color || '#ffffff',
-        apparelModel: (design as { apparel_model?: string }).apparel_model || 'tshirtman',
-      };
-
-      localStorage.setItem('caliqui_workspace', JSON.stringify(workspace));
-      init();
-    } catch (e) {
-      console.error(e);
+      await loadSavedDesignIntoEditor(design);
+      navigate('/editor');
+    } catch (error) {
+      console.error('Failed to load saved design into Studio:', error);
+      window.alert('This design could not be opened. Please try again.');
     }
-    navigate('/editor');
   };
 
-  // --- EXPLICIT DB DELETION FIX (Bug 3) ---
+  // Designs are soft-deleted in the `designs` table and hidden by deleted_at IS NULL.
   const handleDeleteDesignDB = async (designId: string) => {
-    if (!window.confirm('Are you sure you want to permanently delete this design?')) return;
-
-    // Instantly remove from the UI
-    deleteDesign(designId);
-
-    try {
-      // Actually delete from the database
-      await supabase.from('saved_designs').delete().eq('id', designId);
-      fetchDashboardData(); // Re-sync to ensure clean state
-    } catch (err) {
-      console.error('Failed to delete design from database', err);
-    }
+    if (!window.confirm('Are you sure you want to delete this design?')) return;
+    await deleteDesign(designId);
   };
 
   const handleOpenSizeModal = (design: SavedDesign) => {
     setSelectedDesign(design);
     setSelectedSizes({ S: 0, M: 1, L: 0, XL: 0, XXL: 0 });
-    setFocusedSize('M');
   };
 
   const confirmAddToCart = () => {
@@ -603,18 +537,36 @@ export function Dashboard() {
       updated = [...addresses, { id: crypto.randomUUID(), ...addrForm }];
     }
 
-    setAddresses(updated);
-    await supabase.from('profiles').update({ saved_addresses: updated }).eq('id', profile.id);
-    setIsAddressFormOpen(false);
-    setEditingAddrId(null);
-    setAddrForm({ label: '', fullName: '', phone: '', address: '' });
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ saved_addresses: updated })
+        .eq('id', profile.id);
+      if (error) throw error;
+      setAddresses(updated);
+      setIsAddressFormOpen(false);
+      setEditingAddrId(null);
+      setAddrForm({ label: '', fullName: '', phone: '', address: '' });
+    } catch (error) {
+      console.error('Failed to save address:', error);
+      window.alert('Your address could not be saved. Please try again.');
+    }
   };
 
   const handleDeleteAddress = async (id: string) => {
     if (!profile) return;
     const updated = addresses.filter((a) => a.id !== id);
-    setAddresses(updated);
-    await supabase.from('profiles').update({ saved_addresses: updated }).eq('id', profile.id);
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ saved_addresses: updated })
+        .eq('id', profile.id);
+      if (error) throw error;
+      setAddresses(updated);
+    } catch (error) {
+      console.error('Failed to delete address:', error);
+      window.alert('Your address could not be deleted. Please try again.');
+    }
   };
 
   const handleSignOut = async () => {
@@ -671,63 +623,44 @@ export function Dashboard() {
               </button>
             </div>
 
-            <p className="text-[10px] text-neutral-400 mb-4 tracking-wide text-center">
-              Left-click to add, right-click to remove. Mobile: tap to add, press & hold to remove.
+            <p className="text-xs text-neutral-500 mb-4 text-center">
+              Choose the quantity for each size.
             </p>
 
-            <div className="grid grid-cols-5 gap-2 mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-6">
               {['S', 'M', 'L', 'XL', 'XXL'].map((size) => {
                 const qty = selectedSizes[size] || 0;
-                const isFocused = focusedSize === size;
                 return (
-                  <button
-                    key={size}
-                    type="button"
-                    onClick={(e) => handleSizeLeftClick(e, size)}
-                    onContextMenu={(e) => handleSizeRightClick(e, size)}
-                    onTouchStart={() => handleTouchStart(size)}
-                    onTouchEnd={handleTouchEnd}
-                    className={`relative h-12 rounded-xl flex items-center justify-center text-xs font-medium transition-all outline-none border select-none touch-none ${
-                      isFocused
-                        ? 'border-black border-[1.5px] text-black shadow-sm bg-neutral-50/30'
-                        : 'border-neutral-200 text-neutral-400 hover:border-black/40 hover:text-black'
-                    }`}
-                  >
-                    {size}
-                    {qty > 0 && (
-                      <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-black text-white text-[8px] font-bold flex items-center justify-center rounded-full shadow-sm animate-in zoom-in border-2 border-white">
-                        {qty}
-                      </span>
-                    )}
-                  </button>
+                  <div key={size} className="flex items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-white px-3 py-2.5">
+                    <span className="w-10 text-sm font-semibold text-neutral-800">{size}</span>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        aria-label={`Remove one size ${size}`}
+                        onClick={() => updateLocalSize(size, -1)}
+                        disabled={qty === 0}
+                        className="w-9 h-9 rounded-lg border border-neutral-200 flex items-center justify-center text-neutral-700 hover:bg-neutral-50 disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        <Minus size={14} />
+                      </button>
+                      <output aria-live="polite" className="w-5 text-center text-sm font-semibold tabular-nums">{qty}</output>
+                      <button
+                        type="button"
+                        aria-label={`Add one size ${size}`}
+                        onClick={() => updateLocalSize(size, 1)}
+                        className="w-9 h-9 rounded-lg bg-neutral-900 text-white flex items-center justify-center hover:bg-neutral-700"
+                      >
+                        <Plus size={14} />
+                      </button>
+                    </div>
+                  </div>
                 );
               })}
             </div>
 
-            <div className="flex items-center justify-between px-5 py-4 bg-[#fbfbfd] border border-black/4 rounded-2xl mb-8 transition-all">
-              <span className="text-[10px] font-medium uppercase tracking-widest text-neutral-500">
-                Quantity <span className="text-black font-bold ml-1">({focusedSize})</span>
-              </span>
-              <div className="flex items-center gap-6 text-black">
-                <button
-                  type="button"
-                  onClick={() => updateLocalSize(focusedSize, -1)}
-                  disabled={selectedSizes[focusedSize] === 0}
-                  className="hover:opacity-50 disabled:opacity-20 outline-none p-1.5 transition-opacity bg-white rounded-md shadow-sm border border-black/5"
-                >
-                  <Minus size={14} strokeWidth={1.5} />
-                </button>
-                <span className="text-sm font-semibold w-6 text-center">
-                  {selectedSizes[focusedSize] || 0}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => updateLocalSize(focusedSize, 1)}
-                  className="hover:opacity-50 outline-none p-1.5 transition-opacity bg-white rounded-md shadow-sm border border-black/5"
-                >
-                  <Plus size={14} strokeWidth={1.5} />
-                </button>
-              </div>
+            <div className="flex items-center justify-between px-5 py-4 bg-[#fbfbfd] border border-black/4 rounded-2xl mb-8">
+              <span className="text-xs font-medium text-neutral-500">Total quantity</span>
+              <span className="text-sm font-semibold text-black tabular-nums">{totalQty}</span>
             </div>
 
             <button

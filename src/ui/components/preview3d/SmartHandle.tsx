@@ -1,8 +1,9 @@
-import { type ThreeEvent, useThree } from '@react-three/fiber';
+import { type ThreeEvent } from '@react-three/fiber';
 import type React from 'react';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { type DecalData, useEditorStore } from '@/ui/store/editor-store';
+import { claimEditorGesture, ownsEditorGesture, releaseEditorGesture } from './gestureCoordinator';
 import {
   type DragState,
   type InteractionMode,
@@ -48,7 +49,8 @@ export function SmartHandle({
     decals,
     selectedIds,
   } = useEditorStore();
-  const { camera } = useThree();
+  const pointerIdRef = useRef<number | null>(null);
+  const captureTargetRef = useRef<PointerCapturable | null>(null);
 
   useEffect(() => {
     if (!isDragging && mode !== 'idle') {
@@ -56,22 +58,38 @@ export function SmartHandle({
     }
   }, [isDragging, mode, setMode]);
 
-  const getLocalHit = (e: ThreeEvent<PointerEvent>, applyRotationOffset: boolean) => {
+  useEffect(() => () => {
+    const pointerId = pointerIdRef.current;
+    if (pointerId === null) return;
+    const released = releaseEditorGesture('transform', pointerId);
+    try { captureTargetRef.current?.releasePointerCapture?.(pointerId); } catch {}
+    if (released) useEditorStore.getState().setIsDragging(false);
+    pointerIdRef.current = null;
+    captureTargetRef.current = null;
+  }, []);
+
+  const getLocalHit = (e: ThreeEvent<PointerEvent>) => {
     const dummy = new THREE.Object3D();
     primaryMesh.add(dummy);
-    dummy.position.set(...decal.position);
+    dummy.position.set(decal.position[0], decal.position[1], decal.position[2]);
     dummy.rotation.set(decal.rotation[0], decal.rotation[1], decal.rotation[2]);
-    if (applyRotationOffset) dummy.rotateZ(decal.rotationOffset || 0);
+
+    // Always apply rotation offset to match the final rendered visual orientation
+    // for both resize and rotate handles
+    dummy.rotateZ(decal.rotationOffset || 0);
     dummy.updateMatrixWorld(true);
 
     const worldPos = new THREE.Vector3();
     dummy.getWorldPosition(worldPos);
 
-    const planeNormal = camera.getWorldDirection(new THREE.Vector3()).negate();
+    const normalMatrix = new THREE.Matrix3().getNormalMatrix(dummy.matrixWorld);
+    const planeNormal = new THREE.Vector3(0, 0, 1)
+      .applyMatrix3(normalMatrix)
+      .normalize();
     const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(planeNormal, worldPos);
 
-    const hitPoint = new THREE.Vector3();
-    e.ray.intersectPlane(plane, hitPoint);
+    const targetPoint = new THREE.Vector3();
+    const hitPoint = e.ray.intersectPlane(plane, targetPoint);
 
     if (!hitPoint) {
       primaryMesh.remove(dummy);
@@ -85,7 +103,6 @@ export function SmartHandle({
     return localHit;
   };
 
-  // FIX: Helper to calculate the true starting scale factoring in the dynamic aspect ratio
   const getTrueScale = (d: DecalData) => {
     const ratio = d.aspectRatio || 1;
     let sx = d.scaleX ?? d.scale;
@@ -100,15 +117,28 @@ export function SmartHandle({
         sy = d.scale / ratio;
       }
     }
+
+    sx = Number.isFinite(sx) ? sx : MIN_SCALE;
+    sy = Number.isFinite(sy) ? sy : MIN_SCALE;
+
     return { sx, sy };
   };
 
   const handlePointerDown = (e: ThreeEvent<PointerEvent>, type: 'resize' | 'rotate') => {
+    // Only the primary pointer edits a transform handle. Secondary mouse
+    // buttons remain available for camera/context interactions.
+    if (e.button !== 0) return;
+
+    // Validate geometry first; only then claim the pointer for this transform handle.
+    const localHit = getLocalHit(e);
+    if (!localHit || !claimEditorGesture('transform', e.pointerId)) return;
     e.stopPropagation();
 
     const target = e.target as unknown as PointerCapturable;
+    pointerIdRef.current = e.pointerId;
+    captureTargetRef.current = target || null;
     if (target && typeof target.setPointerCapture === 'function') {
-      target.setPointerCapture(e.pointerId);
+      try { target.setPointerCapture(e.pointerId); } catch {}
     }
 
     saveHistory();
@@ -118,49 +148,47 @@ export function SmartHandle({
 
     document.body.style.cursor = type === 'rotate' ? ROTATE_CURSOR : scaleCursor;
 
-    const localHit = getLocalHit(e, type === 'resize');
-    if (localHit) {
-      const { sx: trueSx, sy: trueSy } = getTrueScale(decal);
+    const { sx: trueSx, sy: trueSy } = getTrueScale(decal);
 
-      const groupInitialStates: Record<string, { sx: number; sy: number; s: number; rot: number }> =
-        {};
+    const groupInitialStates: Record<string, { sx: number; sy: number; s: number; rot: number }> =
+      {};
 
-      decals.forEach((d) => {
-        if (
-          d.id === decal.id ||
-          (decal.groupId && d.groupId === decal.groupId) ||
-          (selectedIds.includes(decal.id) && selectedIds.includes(d.id))
-        ) {
-          const { sx: dSx, sy: dSy } = getTrueScale(d);
-          groupInitialStates[d.id] = {
-            sx: dSx,
-            sy: dSy,
-            s: d.scale,
-            rot: d.rotationOffset || 0,
-          };
-        }
-      });
-
-      if (dragState.current) {
-        dragState.current = {
-          startMouseAngle: Math.atan2(localHit.y, localHit.x),
-          startRotationOffset: decal.rotationOffset || 0,
-          startMouseX: localHit.x,
-          startMouseY: localHit.y,
-          startScaleX: trueSx,
-          startScaleY: trueSy,
-          startDistance: Math.sqrt(localHit.x ** 2 + localHit.y ** 2),
-          groupInitialStates,
+    decals.forEach((d) => {
+      if (
+        d.id === decal.id ||
+        (decal.groupId && d.groupId === decal.groupId) ||
+        (selectedIds.includes(decal.id) && selectedIds.includes(d.id))
+      ) {
+        const { sx: dSx, sy: dSy } = getTrueScale(d);
+        groupInitialStates[d.id] = {
+          sx: dSx,
+          sy: dSy,
+          s: d.scale,
+          rot: d.rotationOffset || 0,
         };
       }
+    });
+
+    if (dragState.current) {
+      dragState.current = {
+        startMouseAngle: Math.atan2(localHit.y, localHit.x),
+        startRotationOffset: decal.rotationOffset || 0,
+        startMouseX: localHit.x,
+        startMouseY: localHit.y,
+        startScaleX: Math.max(0.0001, trueSx),
+        startScaleY: Math.max(0.0001, trueSy),
+        startDistance: Math.max(0.0001, Math.sqrt(localHit.x ** 2 + localHit.y ** 2)),
+        groupInitialStates,
+      };
     }
   };
 
   const handlePointerMove = (e: ThreeEvent<PointerEvent>, type: 'resize' | 'rotate') => {
+    if (!ownsEditorGesture('transform', e.pointerId) || pointerIdRef.current !== e.pointerId) return;
     e.stopPropagation();
 
     if (mode === type && dragState.current && dragState.current.groupInitialStates) {
-      const localHit = getLocalHit(e, type === 'resize');
+      const localHit = getLocalHit(e);
       if (!localHit) return;
 
       const groupInitialStates = dragState.current.groupInitialStates;
@@ -168,6 +196,10 @@ export function SmartHandle({
       if (type === 'rotate') {
         const currentAngle = Math.atan2(localHit.y, localHit.x);
         let deltaAngle = currentAngle - dragState.current.startMouseAngle;
+
+        // Normalize delta across the boundary
+        if (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
+        if (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
 
         if (e.shiftKey) {
           const absoluteRotation = dragState.current.startRotationOffset + deltaAngle;
@@ -184,7 +216,7 @@ export function SmartHandle({
 
         if (isCorner) {
           const currentDistance = Math.sqrt(localHit.x ** 2 + localHit.y ** 2);
-          const uniformMult = currentDistance / Math.max(0.0001, dragState.current.startDistance);
+          const uniformMult = currentDistance / dragState.current.startDistance;
           scaleRatioX = uniformMult;
           scaleRatioY = uniformMult;
         } else {
@@ -192,13 +224,24 @@ export function SmartHandle({
           const deltaY = localHit.y - dragState.current.startMouseY;
 
           if (dirX !== 0) {
-            const newSx = Math.max(MIN_SCALE, dragState.current.startScaleX + deltaX * dirX * 2);
+            const newSx = dragState.current.startScaleX + deltaX * dirX * 2;
             scaleRatioX = newSx / dragState.current.startScaleX;
           }
           if (dirY !== 0) {
-            const newSy = Math.max(MIN_SCALE, dragState.current.startScaleY + deltaY * dirY * 2);
+            const newSy = dragState.current.startScaleY + deltaY * dirY * 2;
             scaleRatioY = newSy / dragState.current.startScaleY;
           }
+        }
+
+        scaleRatioX = Number.isFinite(scaleRatioX) ? Math.max(0.0001, scaleRatioX) : 1;
+        scaleRatioY = Number.isFinite(scaleRatioY) ? Math.max(0.0001, scaleRatioY) : 1;
+
+        // Side handles normally resize along one axis. When proportion lock is
+        // enabled, convert that change into a uniform scale just like a corner drag.
+        if (!isCorner && decal.lockAspectRatio !== false) {
+          const uniformRatio = dirX !== 0 ? scaleRatioX : scaleRatioY;
+          scaleRatioX = uniformRatio;
+          scaleRatioY = uniformRatio;
         }
 
         Object.keys(groupInitialStates).forEach((id) => {
@@ -217,19 +260,22 @@ export function SmartHandle({
   };
 
   const handlePointerUp = (e: ThreeEvent<PointerEvent>) => {
+    if (!ownsEditorGesture('transform', e.pointerId) || pointerIdRef.current !== e.pointerId) return;
     e.stopPropagation();
 
-    const target = e.target as unknown as PointerCapturable;
+    const target = captureTargetRef.current;
+    captureTargetRef.current = null;
+    pointerIdRef.current = null;
     if (target && typeof target.releasePointerCapture === 'function') {
-      try {
-        target.releasePointerCapture(e.pointerId);
-      } catch {}
+      try { target.releasePointerCapture(e.pointerId); } catch {}
     }
 
+    releaseEditorGesture('transform', e.pointerId);
     setMode('idle');
     setIsDragging(false);
     document.body.style.cursor = 'default';
   };
+
 
   return (
     <group position={position}>
@@ -241,7 +287,7 @@ export function SmartHandle({
         receiveShadow={false}
       >
         <circleGeometry args={[0.032, 32]} />
-        <meshBasicMaterial color="#0d99ff" depthTest={false} />
+        <meshBasicMaterial color="#778b9a" depthTest={false} />
       </mesh>
       <mesh
         position={[0, 0, 0.015]}
@@ -255,11 +301,13 @@ export function SmartHandle({
       </mesh>
 
       <mesh
-        userData={{ isDecalHitbox: true }}
+        userData={{ isDecalHitbox: true, decalId: decal.id, isTransformHandle: true }}
         position={[0, 0, 0.05]}
         onPointerDown={(e) => handlePointerDown(e, 'resize')}
         onPointerMove={(e) => handlePointerMove(e, 'resize')}
         onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onLostPointerCapture={handlePointerUp}
         onPointerOver={(e) => {
           e.stopPropagation();
           if (mode === 'idle') document.body.style.cursor = scaleCursor;
@@ -277,11 +325,13 @@ export function SmartHandle({
 
       {isCorner && (
         <mesh
-          userData={{ isDecalHitbox: true }}
+          userData={{ isDecalHitbox: true, decalId: decal.id, isTransformHandle: true }}
           position={[0, 0, 0.05]}
           onPointerDown={(e) => handlePointerDown(e, 'rotate')}
           onPointerMove={(e) => handlePointerMove(e, 'rotate')}
           onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onLostPointerCapture={handlePointerUp}
           onPointerOver={(e) => {
             e.stopPropagation();
             if (mode === 'idle') document.body.style.cursor = ROTATE_CURSOR;

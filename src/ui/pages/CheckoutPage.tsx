@@ -7,6 +7,8 @@ import {
   Loader2,
   Lock,
   MapPin,
+  Minus,
+  Plus,
   ShoppingBag,
   Trash2,
   XCircle,
@@ -65,17 +67,21 @@ function ItemAddressWidget({
       alert('Please fill out all address fields.');
       return;
     }
-    const created = await addAddress({
-      label: newLabel || 'Home',
-      fullName: newFullName,
-      phone: newPhone,
-      address: newAddressStr,
-    });
-    if (created) {
+    try {
+      const created = await addAddress({
+        label: newLabel || 'Home',
+        fullName: newFullName,
+        phone: newPhone,
+        address: newAddressStr,
+      });
+      if (!created) throw new Error('Address could not be saved.');
       onSelect(created.id);
       if (applyAll) onApplyToAll(created.id);
       setIsAddingNew(false);
       setIsOpen(false);
+    } catch (error) {
+      console.error('Failed to save checkout address:', error);
+      alert('Your address could not be saved. Please check your connection and try again.');
     }
   };
 
@@ -239,9 +245,6 @@ export function CheckoutPage() {
 
   const [itemAddrIds, setItemAddrIds] = useState<Record<string, string>>({});
 
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isLongPress = useRef(false);
-
   // 1. Initialize checkout, fetch addresses, and hydrate cart unconditionally on mount
   useEffect(() => {
     initCheckout('custom');
@@ -282,38 +285,6 @@ export function CheckoutPage() {
     const qty = Object.values(item.sizes).reduce((a, b) => a + b, 0);
     return sum + item.price * qty;
   }, 0);
-
-  // --- Solid Touch & Click Engine ---
-  const handleTouchStart = (cartId: string, size: string) => {
-    isLongPress.current = false;
-    longPressTimer.current = setTimeout(() => {
-      isLongPress.current = true;
-      updateCartItemQuantity(cartId, size, -1);
-      if (navigator.vibrate) navigator.vibrate(50);
-    }, 500);
-  };
-
-  const handleTouchEnd = () => {
-    if (longPressTimer.current) clearTimeout(longPressTimer.current);
-  };
-
-  const handleSizeClick = (
-    e: React.MouseEvent | React.TouchEvent,
-    cartId: string,
-    size: string,
-  ) => {
-    e.preventDefault();
-    if (isLongPress.current) {
-      isLongPress.current = false;
-      return;
-    }
-    updateCartItemQuantity(cartId, size, 1);
-  };
-
-  const handleSizeRightClick = (e: React.MouseEvent, cartId: string, size: string) => {
-    e.preventDefault();
-    updateCartItemQuantity(cartId, size, -1);
-  };
 
   const handleApplyToAll = (addressId: string) => {
     const updated: Record<string, string> = {};
@@ -548,44 +519,36 @@ export function CheckoutPage() {
                           <p className="text-[9px] font-bold uppercase tracking-widest text-neutral-400 mb-3">
                             Select Sizes
                           </p>
-                          <div className="flex flex-wrap gap-2 w-full">
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 w-full">
                             {['XS', 'S', 'M', 'L', 'XL', 'XXL'].map((size) => {
                               const qty = item.sizes[size] || 0;
                               return (
-                                <button
-                                  key={size}
-                                  type="button"
-                                  onClick={(e) => handleSizeClick(e, item.cartId, size)}
-                                  onContextMenu={(e) => handleSizeRightClick(e, item.cartId, size)}
-                                  onTouchStart={() => handleTouchStart(item.cartId, size)}
-                                  onTouchEnd={handleTouchEnd}
-                                  onTouchCancel={handleTouchEnd}
-                                  className={`relative w-11 h-11 shrink-0 rounded-full flex items-center justify-center text-[10px] sm:text-xs font-bold transition-all outline-none touch-none select-none
-                                    ${
-                                      qty > 0
-                                        ? 'bg-black text-white shadow-md'
-                                        : 'bg-white border border-black/10 text-neutral-400 hover:border-black hover:text-black'
-                                    }
-                                  `}
-                                >
-                                  {size}
-                                  {qty > 0 && (
-                                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-white border border-black/10 text-black rounded-full flex items-center justify-center text-[9px] shadow-sm font-extrabold animate-in zoom-in">
-                                      {qty}
-                                    </span>
-                                  )}
-                                </button>
+                                <div key={size} className="min-h-11 flex items-center justify-between gap-2 rounded-xl border border-black/10 px-2.5 py-2">
+                                  <span className="text-xs font-semibold text-neutral-800">{size}</span>
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      aria-label={`Remove one size ${size}`}
+                                      onClick={() => updateCartItemQuantity(item.cartId, size, -1)}
+                                      disabled={qty === 0}
+                                      className="w-8 h-8 rounded-lg border border-black/10 flex items-center justify-center text-neutral-700 hover:bg-neutral-50 disabled:opacity-30 disabled:cursor-not-allowed"
+                                    >
+                                      <Minus size={13} />
+                                    </button>
+                                    <output aria-live="polite" className="w-4 text-center text-xs font-semibold tabular-nums">{qty}</output>
+                                    <button
+                                      type="button"
+                                      aria-label={`Add one size ${size}`}
+                                      onClick={() => updateCartItemQuantity(item.cartId, size, 1)}
+                                      className="w-8 h-8 rounded-lg bg-black text-white flex items-center justify-center hover:bg-neutral-800"
+                                    >
+                                      <Plus size={13} />
+                                    </button>
+                                  </div>
+                                </div>
                               );
                             })}
                           </div>
-                          <p className="text-[9px] text-neutral-400 mt-3 font-medium">
-                            <span className="hidden sm:inline">
-                              Left-click to add. Right-click to remove.
-                            </span>
-                            <span className="inline sm:hidden">
-                              Tap to add. Press & hold to remove.
-                            </span>
-                          </p>
                         </div>
 
                         <div className="mt-auto pt-4 flex items-center justify-between">

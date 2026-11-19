@@ -1,10 +1,11 @@
 import { type ThreeEvent, useThree } from '@react-three/fiber';
 import type React from 'react';
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import type { DecalData } from '@/ui/store/editor-store';
 import { useEditorStore } from '@/ui/store/editor-store';
 import type { DragState, InteractionMode, PointerCapturable } from './types';
+import { claimEditorGesture, ownsEditorGesture, releaseEditorGesture } from './gestureCoordinator';
 
 const _raycaster = new THREE.Raycaster();
 const _plane = new THREE.Plane();
@@ -31,10 +32,55 @@ export function CropHandle({
 }) {
   const { camera } = useThree();
   const isHovered = useRef(false);
+  const cropRequestRef = useRef(0);
+  const pointerIdRef = useRef<number | null>(null);
+  const captureTargetRef = useRef<PointerCapturable | null>(null);
+
+  const finishCropPointer = (e: ThreeEvent<PointerEvent>) => {
+    if (pointerIdRef.current !== e.pointerId || !ownsEditorGesture('crop', e.pointerId)) return;
+    e.stopPropagation();
+    const released = releaseEditorGesture('crop', e.pointerId);
+    pointerIdRef.current = null;
+    if (released) {
+      setMode('idle');
+      const store = useEditorStore.getState();
+      store.setIsDragging(false);
+      const currentDecal = store.decals.find((d) => d.id === decal.id);
+      if (currentDecal) {
+        const requestId = ++cropRequestRef.current;
+        import('@/ui/store/editor-store').then(({ applyImageFilters }) => {
+          return applyImageFilters(currentDecal);
+        }).then(({ src, aspectRatio }) => {
+          if (requestId !== cropRequestRef.current) return;
+          const latest = useEditorStore.getState().decals.find((d) => d.id === decal.id);
+          if (!latest) return;
+          useEditorStore.getState().updateDecal(decal.id, { src, aspectRatio });
+        }).catch((error) => console.error('Failed to apply crop:', error));
+      }
+    }
+    const target = captureTargetRef.current;
+    captureTargetRef.current = null;
+    if (target && typeof target.releasePointerCapture === 'function') {
+      try { target.releasePointerCapture(e.pointerId); } catch {}
+    }
+    document.body.style.cursor = 'default';
+  };
+
+  useEffect(() => () => {
+    const pointerId = pointerIdRef.current;
+    if (pointerId === null) return;
+    const released = releaseEditorGesture('crop', pointerId);
+    try { captureTargetRef.current?.releasePointerCapture?.(pointerId); } catch {}
+    if (released) useEditorStore.getState().setIsDragging(false);
+    pointerIdRef.current = null;
+    captureTargetRef.current = null;
+    document.body.style.cursor = 'default';
+  }, []);
 
   return (
     <group position={position}>
       <mesh
+        userData={{ isDecalHitbox: true, decalId: decal.id, isCropHandle: true }}
         onPointerOver={(e: ThreeEvent<PointerEvent>) => {
           e.stopPropagation();
           isHovered.current = true;
@@ -48,8 +94,13 @@ export function CropHandle({
           if (mode === 'idle') document.body.style.cursor = 'grab';
         }}
         onPointerDown={(e: ThreeEvent<PointerEvent>) => {
+          if (e.button !== 0 || !claimEditorGesture('crop', e.pointerId)) return;
           e.stopPropagation();
-          if (e.button === 2) return;
+          pointerIdRef.current = e.pointerId;
+          const target = e.target as unknown as PointerCapturable;
+          captureTargetRef.current = target || null;
+          try { target?.setPointerCapture?.(e.pointerId); } catch {}
+          cropRequestRef.current += 1;
 
           const store = useEditorStore.getState();
           store.saveHistory();
@@ -63,7 +114,16 @@ export function CropHandle({
           );
 
           _raycaster.setFromCamera(e.pointer, camera);
-          _raycaster.ray.intersectPlane(_plane, _intersectPoint);
+          if (!_raycaster.ray.intersectPlane(_plane, _intersectPoint)) {
+            releaseEditorGesture('crop', e.pointerId);
+            pointerIdRef.current = null;
+            const captureTarget = captureTargetRef.current;
+            captureTargetRef.current = null;
+            try { captureTarget?.releasePointerCapture?.(e.pointerId); } catch {}
+            setMode('idle');
+            store.setIsDragging(false);
+            return;
+          }
 
           dragState.current = {
             ...dragState.current,
@@ -76,16 +136,13 @@ export function CropHandle({
             startDistance: decal.cropH || 100,
           };
 
-          const target = e.target as unknown as PointerCapturable;
-          if (target && typeof target.setPointerCapture === 'function') {
-            target.setPointerCapture(e.pointerId);
-          }
         }}
         onPointerMove={(e: ThreeEvent<PointerEvent>) => {
+          if (pointerIdRef.current !== e.pointerId || !ownsEditorGesture('crop', e.pointerId)) return;
           e.stopPropagation();
-          if (mode === 'crop' && isHovered.current) {
+          if (mode === 'crop') {
             _raycaster.setFromCamera(e.pointer, camera);
-            _raycaster.ray.intersectPlane(_plane, _intersectPoint);
+            if (!_raycaster.ray.intersectPlane(_plane, _intersectPoint)) return;
 
             const dx = _intersectPoint.x - dragState.current.startMouseX;
             const dy = _intersectPoint.y - dragState.current.startMouseY;
@@ -128,30 +185,10 @@ export function CropHandle({
             });
           }
         }}
-        onPointerUp={(e: ThreeEvent<PointerEvent>) => {
-          e.stopPropagation();
-          if (mode === 'crop') {
-            setMode('idle');
-            useEditorStore.getState().setIsDragging(false);
+        onPointerUp={finishCropPointer}
+        onPointerCancel={finishCropPointer}
+        onLostPointerCapture={finishCropPointer}
 
-            // Force the canvas to recalculate and generate the new cropped image
-            const store = useEditorStore.getState();
-            const currentDecal = store.decals.find((d) => d.id === decal.id);
-            if (currentDecal) {
-              import('@/ui/store/editor-store').then(({ applyImageFilters }) => {
-                applyImageFilters(currentDecal).then(({ src, aspectRatio }) => {
-                  store.updateDecal(decal.id, { src, aspectRatio });
-                });
-              });
-            }
-          }
-          const target = e.target as unknown as PointerCapturable;
-          if (target && typeof target.releasePointerCapture === 'function') {
-            try {
-              target.releasePointerCapture(e.pointerId);
-            } catch {}
-          }
-        }}
       >
         {/* Draw a distinct pill-shaped handle for cropping */}
         <capsuleGeometry args={[0.015, Math.max(0.05, Math.abs(dirX) > 0 ? 0.2 : 0), 4, 8]} />

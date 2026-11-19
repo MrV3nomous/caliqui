@@ -187,11 +187,13 @@ export function ColorPicker({
   onChange,
   onPointerDown,
   disableAlpha = false,
+  bare = false,
 }: {
   color: string;
   onChange: (color: string) => void;
   onPointerDown?: () => void;
   disableAlpha?: boolean;
+  bare?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'presets' | 'custom'>('presets');
@@ -448,7 +450,7 @@ export function ColorPicker({
   const opaqueHex = hsvaToHex(hsva.h, hsva.s, hsva.v, 1);
 
   return (
-    <div className="flex gap-3 p-2 bg-[#fbfbfd] border border-black/[0.04] hover:border-black/10 transition-all rounded-[14px] items-center w-full min-w-0 relative">
+    <div className={`studio-color-picker flex gap-3 items-center w-full min-w-0 relative ${bare ? 'studio-color-picker--bare' : 'p-2 bg-[#fbfbfd] border border-black/[0.04] hover:border-black/10 transition-all rounded-[14px]'}`}>
       <button
         ref={triggerRef}
         type="button"
@@ -465,7 +467,7 @@ export function ColorPicker({
         onChange={(e) => setLocalText(e.target.value)}
         onBlur={(e) => handleHexSubmit(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-        className="flex-1 font-mono uppercase text-[11px] tracking-widest font-medium bg-transparent border-0 text-black px-1 outline-none min-w-0"
+        className="studio-color-value studio-color-value--unboxed flex-1 font-mono uppercase text-[11px] tracking-widest font-medium bg-transparent border-0 text-black px-1 outline-none min-w-0"
       />
 
       {isOpen &&
@@ -661,7 +663,7 @@ export function ColorPicker({
               <button
                 type="button"
                 onClick={() => setIsOpen(false)}
-                className="px-5 py-1.5 text-[11px] font-semibold bg-blue-500 hover:bg-blue-600 text-white rounded-lg shadow-sm transition-colors outline-none active:scale-95"
+                className="studio-color-confirm px-5 py-1.5 text-[11px] font-semibold rounded-lg shadow-sm transition-colors outline-none active:scale-95"
               >
                 Choose
               </button>

@@ -1,10 +1,40 @@
 import { create } from 'zustand';
 import { supabase, uploadAssetToStorage } from '@/shared/lib/supabase';
-import { deleteAssetFromDB, getAllAssetsFromDB, saveAssetToDB } from '@/shared/utils/asset-db';
+import {
+  archiveAssetInDB,
+  clearCheckpointFromDB,
+  clearWorkspaceFromDB,
+  deleteAssetFromDB,
+  getAllAssetsFromDB,
+  getAssetByIdFromDB,
+  loadWorkspaceFromDB,
+  saveAssetToDB,
+  saveCheckpointToDB,
+  saveWorkspaceToDB,
+} from '@/shared/utils/asset-db';
 import { processAndCompressImage } from '@/shared/utils/image-processing';
 
-export type ToolType = 'text' | 'shape' | 'image' | 'drawing';
+// --- MUTEXES & TOKENS ---
+let activeInitCount = 0;
+let isInitializing = false;
+let initToken = 0;
+let editorAsyncEpoch = 0;
+let activeSavePromise: Promise<string> | null = null;
+let saveTimeout: ReturnType<typeof setTimeout>;
 
+let activeTransitionPromise: Promise<void> | null = null;
+let activeTransitionToken = 0;
+let activePersistenceMutex: Promise<void> | null = null;
+
+// Centralized runtime registries for local asset persistence.
+interface AssetPersistenceState {
+  promise: Promise<void>;
+  status: 'pending' | 'success' | 'failed';
+}
+const pendingAssetSaves = new Map<string, AssetPersistenceState>();
+const failedAssetIds = new Set<string>();
+
+export type ToolType = 'text' | 'shape' | 'image' | 'drawing';
 export type GlobalToolType =
   | 'default'
   | 'select'
@@ -14,11 +44,8 @@ export type GlobalToolType =
   | 'saturate'
   | 'erase'
   | 'camera';
-
 export type CameraView = 'front' | 'back' | 'left' | 'right' | 'top' | 'custom';
-
 export type ApparelModelType = 'tshirtman' | 'tshirtwoman' | 'tshirtoversized';
-
 export type PlacementModeType = 'front' | 'back' | 'pass-through' | 'wrap';
 
 export interface BrushSettings {
@@ -57,12 +84,15 @@ export interface UserAsset {
 
 export interface DecalData {
   id: string;
+  assetId?: string; // Durable user asset identity
   type: ToolType;
   shapeType?: ShapeType;
   name: string;
-  src?: string;
-  originalSrc?: string;
+  src?: string; // Runtime ONLY
+  originalSrc?: string; // Runtime ONLY if local blob/data URL
   meshName?: string;
+  /** Physical garment panel receiving this artwork; used by proof/export views. */
+  meshSide?: 'front' | 'back';
   position: [number, number, number];
   rotation: [number, number, number];
   scale: number;
@@ -71,10 +101,19 @@ export interface DecalData {
   zDepth?: number;
   rotationOffset?: number;
   groupId?: string;
-
+  /** Layer visibility is persisted with the design. Omitted means visible for legacy designs. */
+  visible?: boolean;
+  /** Locked layers remain visible but cannot be manipulated on the 3D canvas. */
+  locked?: boolean;
+  /** Preserve image proportions when resizing from side handles. */
+  lockAspectRatio?: boolean;
+  /** Texture orientation flags; kept separate from physical transform scale. */
+  flipX?: boolean;
+  flipY?: boolean;
+  needsInitialPlacement?: boolean; // Runtime ONLY
+  initialPlacementScale?: number; // Runtime ONLY: explicit AI scale applied after surface placement
   aspectRatio?: number;
   placementMode?: PlacementModeType;
-
   angleLimit?: number;
 
   cropX?: number;
@@ -122,9 +161,21 @@ export interface DecalData {
   invert?: number;
 }
 
+export interface RemixPayload {
+  id: string;
+  name: string;
+  canvasState: unknown[];
+  tshirtColor: string;
+  apparelModel: ApparelModelType;
+}
+
 interface EditorState {
+  editorRevision: number;
+  decalAsyncGenerations: Record<string, number>;
+
   activeDesignId: string | null;
   designName: string;
+  remixSourceId: string | null;
   decals: DecalData[];
   selectedIds: string[];
   isDragging: boolean;
@@ -135,7 +186,6 @@ interface EditorState {
   globalToolMode: GlobalToolType;
   brushSettings: BrushSettings;
 
-  // NEW: State for 2D Crop Modal
   croppingDecalId: string | null;
 
   marqueeStart: [number, number, number] | null;
@@ -147,9 +197,11 @@ interface EditorState {
   clipboard: DecalData[];
   contextMenu: { x: number; y: number; decalId: string } | null;
 
+  bgRemovalActiveCount: number;
   isProcessingBgRemoval: boolean;
   bgRemovalProgress: number;
 
+  aiActiveCount: number;
   isAiProcessing: boolean;
   aiFeedbackMessage: string | null;
 
@@ -159,9 +211,11 @@ interface EditorState {
 
   userAssets: UserAsset[];
 
-  init: () => void;
+  init: () => Promise<void>;
   setDesignName: (name: string) => void;
-  resetDesign: () => void;
+  resetDesign: () => Promise<void>;
+  loadRemix: (payload: RemixPayload) => Promise<void>;
+
   setSelectedId: (id: string | null, multi?: boolean) => void;
   setSelectedIds: (ids: string[]) => void;
   setIsDragging: (val: boolean) => void;
@@ -184,10 +238,15 @@ interface EditorState {
     imageSrc?: string,
     shapeType?: ShapeType,
     overrides?: Partial<DecalData>,
+    noHistory?: boolean,
   ) => void;
   updateDecal: (id: string, updates: Partial<DecalData>) => void;
+  setDecalVisibility: (id: string, visible: boolean) => void;
+  setDecalLocked: (id: string, locked: boolean) => void;
+  reorderLayer: (id: string, targetId: string) => void;
+  replaceDecalImage: (id: string, blob: Blob, aspectRatio: number) => Promise<void>;
   updateText: (id: string, newText: string) => Promise<void>;
-  removeDecal: (id: string) => void;
+  removeDecal: (id: string, noHistory?: boolean) => void;
   moveLayerUp: (id: string) => void;
   moveLayerDown: (id: string) => void;
   saveHistory: () => void;
@@ -204,21 +263,36 @@ interface EditorState {
   breakGroup: () => void;
 
   applyBackgroundRemoval: (id: string) => Promise<void>;
-
-  dispatchAiCommand: (prompt: string, targetId?: string) => Promise<void>;
+  dispatchAiCommand: (prompt: string, targetIds?: string[]) => Promise<void>;
 
   setTshirtColor: (color: string) => void;
   setApparelModel: (model: ApparelModelType) => void;
   setCameraView: (view: CameraView) => void;
 
-  addUserAsset: (blob: Blob, aspectRatio: number) => Promise<string>;
+  addUserAsset: (
+    blob: Blob,
+    aspectRatio: number,
+  ) => Promise<{ id: string; src: string; aspectRatio: number }>;
   removeUserAsset: (id: string) => Promise<void>;
-  replaceUserAsset: (oldId: string, blob: Blob, aspectRatio: number) => Promise<string>;
+  replaceUserAsset: (
+    oldId: string,
+    blob: Blob,
+    aspectRatio: number,
+  ) => Promise<{ id: string; src: string; aspectRatio: number }>;
 
   saveDesign: () => Promise<string>;
 }
 
 // --- HELPER FUNCTIONS ---
+
+const pruneGens = (gens: Record<string, number>, decals: DecalData[]) => {
+  const activeIds = new Set(decals.map((d) => d.id));
+  const res: Record<string, number> = {};
+  for (const k in gens) {
+    if (activeIds.has(k)) res[k] = gens[k];
+  }
+  return res;
+};
 
 const hexToRgba = (hex: string, opacityPercent: number) => {
   let c = hex.replace('#', '');
@@ -242,14 +316,203 @@ const applyLineDash = (ctx: CanvasRenderingContext2D, style: string, width: numb
 export const extractLightweightManifest = (decals: DecalData[]): DecalData[] => {
   return decals.map((d) => {
     const blueprint = { ...d };
+
+    delete blueprint.src;
+    delete blueprint.needsInitialPlacement;
+    delete blueprint.initialPlacementScale;
+
+    // Strict invariant: Never persist an assetId whose local binary failed or is still saving
+    if (blueprint.assetId) {
+      const pState = pendingAssetSaves.get(blueprint.assetId);
+      if ((pState && pState.status === 'pending') || failedAssetIds.has(blueprint.assetId)) {
+        delete blueprint.assetId;
+      }
+    }
+
     if (blueprint.type === 'text' || blueprint.type === 'shape') {
-      delete blueprint.src;
       delete blueprint.originalSrc;
     } else if (blueprint.type === 'image' || blueprint.type === 'drawing') {
-      delete blueprint.src;
+      if (
+        blueprint.originalSrc &&
+        (blueprint.originalSrc.startsWith('blob:') || blueprint.originalSrc.startsWith('data:'))
+      ) {
+        delete blueprint.originalSrc;
+      }
     }
+
     return blueprint;
   });
+};
+
+const dataUrlToBlob = async (dataUrl: string): Promise<Blob> => {
+  const res = await fetch(dataUrl);
+  if (!res.ok) throw new Error(`HTTP error fetching asset: ${res.status} ${res.statusText}`);
+  return await res.blob();
+};
+
+const isLocalBinary = (url?: string) => {
+  if (!url) return false;
+  return url.startsWith('blob:') || url.startsWith('data:');
+};
+
+const isBlobUrl = (url?: string) => {
+  if (!url) return false;
+  return url.startsWith('blob:');
+};
+
+const safeNum = (val: unknown, min: number, max: number, fallback: number): number => {
+  if (typeof val === 'number' && Number.isFinite(val)) {
+    return Math.min(Math.max(val, min), max);
+  }
+  if (typeof val === 'string') {
+    const parsed = parseFloat(val);
+    if (Number.isFinite(parsed)) {
+      return Math.min(Math.max(parsed, min), max);
+    }
+  }
+  return fallback;
+};
+
+const VALID_TOOL_TYPES: ToolType[] = ['text', 'shape', 'image', 'drawing'];
+const VALID_PLACEMENT_MODES: PlacementModeType[] = ['front', 'back', 'pass-through', 'wrap'];
+const VALID_TEXT_ALIGNS = ['left', 'center', 'right'];
+const VALID_SHAPES: ShapeType[] = [
+  'rectangle',
+  'circle',
+  'triangle',
+  'star',
+  'diamond',
+  'hexagon',
+  'octagon',
+  'pentagon',
+  'ellipse',
+  'capsule',
+  'cross',
+  'heart',
+  'cloud',
+  'arrow',
+  'parallelogram',
+  'trapezoid',
+  'chat-bubble',
+  'shield',
+  'badge',
+  'bookmark',
+];
+
+const isValidToolType = (type: unknown): type is ToolType =>
+  typeof type === 'string' && VALID_TOOL_TYPES.includes(type as ToolType);
+const isValidShapeType = (type: unknown): type is ShapeType =>
+  typeof type === 'string' && VALID_SHAPES.includes(type as ShapeType);
+const isValidPlacementMode = (mode: unknown): mode is PlacementModeType =>
+  typeof mode === 'string' && VALID_PLACEMENT_MODES.includes(mode as PlacementModeType);
+const isValidTextAlign = (align: unknown): align is 'left' | 'center' | 'right' =>
+  typeof align === 'string' && VALID_TEXT_ALIGNS.includes(align);
+
+const AI_COLOR_PATTERN = /^(#[0-9a-f]{6}|transparent)$/i;
+const AI_TEXTURE_REFRESH_KEYS = new Set<string>([
+  'fill', 'opacity', 'text', 'fontSize', 'fontFamily', 'fontWeight', 'textAlign',
+  'letterSpacing', 'lineHeight', 'strokeWidth', 'strokeColor', 'borderStyle',
+  'borderRadius', 'shadowColor', 'shadowBlur', 'shadowOffsetX', 'shadowOffsetY',
+  'shadowOpacity', 'arc', 'wave', 'squeezeX', 'squeezeY', 'blur', 'brightness',
+  'contrast', 'saturation', 'grayscale', 'sepia', 'hueRotate', 'invert',
+  'tintColor', 'tintOpacity', 'cropX', 'cropY', 'cropW', 'cropH',
+]);
+const AI_BLEND_MODES = [
+  'normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge',
+  'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue',
+  'saturation', 'color', 'luminosity',
+] as const;
+const AI_BORDER_STYLES = ['solid', 'dashed', 'dotted'] as const;
+
+const sanitizeAiOverrides = (overrides: unknown): Partial<DecalData> => {
+  if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) return {};
+  const raw = overrides as Record<string, unknown>;
+  const valid: Partial<DecalData> = {};
+  const number = (key: string, min: number, max: number) => {
+    const value = raw[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return Math.min(Math.max(value, min), max);
+    }
+    return undefined;
+  };
+  const string = (key: string, maxLength: number, preserveLineBreaks = false) => {
+    const value = raw[key];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      const disallowedControls = preserveLineBreaks
+        ? /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g
+        : /[\u0000-\u001f\u007f]/g;
+      return value.replace(disallowedControls, '').trim().slice(0, maxLength);
+    }
+    return undefined;
+  };
+  const color = (key: 'fill' | 'strokeColor' | 'tintColor' | 'shadowColor') => {
+    const value = raw[key];
+    if (typeof value === 'string' && AI_COLOR_PATTERN.test(value)) return value;
+    return undefined;
+  };
+
+  const numericRanges: Array<[keyof DecalData, number, number]> = [
+    ['scale', 0.01, 10], ['scaleX', 0.01, 10], ['scaleY', 0.01, 10],
+    ['zDepth', 0.01, 15], ['angleLimit', 10, 90],
+    ['rotationOffset', -Math.PI * 2, Math.PI * 2], ['aspectRatio', 0.01, 100],
+    ['opacity', 0, 100], ['tintOpacity', 0, 100], ['shadowOpacity', 0, 100],
+    ['shadowBlur', 0, 100], ['shadowOffsetX', -100, 100], ['shadowOffsetY', -100, 100],
+    ['blur', 0, 50], ['brightness', 0, 200], ['contrast', 0, 200],
+    ['saturation', 0, 200], ['grayscale', 0, 100], ['sepia', 0, 100],
+    ['hueRotate', 0, 360], ['invert', 0, 100], ['arc', -360, 360], ['wave', 0, 100],
+    ['squeezeX', 0.1, 3], ['squeezeY', 0.1, 3], ['fontSize', 8, 400],
+    ['letterSpacing', -50, 80], ['lineHeight', 0.5, 4], ['strokeWidth', 0, 100],
+    ['borderRadius', 0, 500], ['cropX', 0, 100], ['cropY', 0, 100],
+    ['cropW', 0.1, 100], ['cropH', 0.1, 100],
+  ];
+  for (const [key, min, max] of numericRanges) {
+    const value = number(String(key), min, max);
+    if (value !== undefined) (valid as Record<string, unknown>)[key] = value;
+  }
+
+  if (Array.isArray(raw.position) && raw.position.length === 3 && raw.position.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+    valid.position = [
+      safeNum(raw.position[0], -2, 2, 0),
+      safeNum(raw.position[1], -2, 2, 0),
+      safeNum(raw.position[2], -2, 2, 0),
+    ];
+  }
+  if (Array.isArray(raw.rotation) && raw.rotation.length === 3 && raw.rotation.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+    valid.rotation = [
+      safeNum(raw.rotation[0], -Math.PI * 2, Math.PI * 2, 0),
+      safeNum(raw.rotation[1], -Math.PI * 2, Math.PI * 2, 0),
+      safeNum(raw.rotation[2], -Math.PI * 2, Math.PI * 2, 0),
+    ];
+  }
+
+  for (const key of ['fill', 'strokeColor', 'tintColor', 'shadowColor'] as const) {
+    const value = color(key);
+    if (value !== undefined) (valid as Record<string, unknown>)[key] = value;
+  }
+  const name = string('name', 80);
+  if (name !== undefined) valid.name = name;
+  const text = string('text', 300, true);
+  if (text !== undefined) valid.text = text;
+  const fontFamily = string('fontFamily', 80);
+  if (fontFamily && /^[\w\s,'"-]+$/.test(fontFamily)) valid.fontFamily = fontFamily;
+  const fontWeight = raw.fontWeight;
+  if ((typeof fontWeight === 'number' && Number.isFinite(fontWeight)) ||
+      (typeof fontWeight === 'string' && /^(normal|bold|bolder|lighter|[1-9]00)$/i.test(fontWeight))) {
+    valid.fontWeight = typeof fontWeight === 'number' ? Math.min(900, Math.max(100, fontWeight)) : fontWeight;
+  }
+  const blendMode = raw.blendMode;
+  if (typeof blendMode === 'string' && (AI_BLEND_MODES as readonly string[]).includes(blendMode)) valid.blendMode = blendMode;
+  const borderStyle = raw.borderStyle;
+  if (typeof borderStyle === 'string' && (AI_BORDER_STYLES as readonly string[]).includes(borderStyle)) valid.borderStyle = borderStyle;
+  if (isValidPlacementMode(raw.placementMode)) valid.placementMode = raw.placementMode;
+  if (isValidTextAlign(raw.textAlign)) valid.textAlign = raw.textAlign;
+  if (typeof raw.flipX === 'boolean') valid.flipX = raw.flipX;
+  if (typeof raw.flipY === 'boolean') valid.flipY = raw.flipY;
+  if (typeof raw.lockAspectRatio === 'boolean') valid.lockAspectRatio = raw.lockAspectRatio;
+  if (typeof raw.visible === 'boolean') valid.visible = raw.visible;
+  if (typeof raw.locked === 'boolean') valid.locked = raw.locked;
+
+  return valid;
 };
 
 export const applyImageFilters = (
@@ -436,7 +699,6 @@ export function generateAssetTexture(config: Partial<DecalData>): string {
   if (type === 'shape') {
     const padding = strokeWidth / 2;
     const size = 512 - padding * 2;
-
     const cx = 256;
     const cy = 256;
     const r = size / 2;
@@ -729,8 +991,8 @@ export const getDefaultConfig = (_type: ToolType): Partial<DecalData> => ({
   squeezeX: 1,
   squeezeY: 1,
   scale: 0.2,
-  zDepth: 0.8, // FIX: High depth guarantees immediate visibility on spawn
-  angleLimit: 85,
+  zDepth: 0.12,
+  angleLimit: 65,
   cropX: 0,
   cropY: 0,
   cropW: 100,
@@ -738,17 +1000,20 @@ export const getDefaultConfig = (_type: ToolType): Partial<DecalData> => ({
   rotationOffset: 0,
   aspectRatio: 1,
   placementMode: 'front',
+  visible: true,
+  locked: false,
+  lockAspectRatio: true,
+  flipX: false,
+  flipY: false,
 });
 
-// Helper function to convert base64 data: URL to a Blob
-const dataUrlToBlob = async (dataUrl: string): Promise<Blob> => {
-  const res = await fetch(dataUrl);
-  return await res.blob();
-};
-
 export const useEditorStore = create<EditorState>((set, get) => ({
+  editorRevision: 0,
+  decalAsyncGenerations: {},
+
   activeDesignId: null,
   designName: 'Untitled Design',
+  remixSourceId: null,
   decals: [],
   selectedIds: [],
   isDragging: false,
@@ -770,9 +1035,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   clipboard: [],
   contextMenu: null,
 
+  bgRemovalActiveCount: 0,
   isProcessingBgRemoval: false,
   bgRemovalProgress: 0,
 
+  aiActiveCount: 0,
   isAiProcessing: false,
   aiFeedbackMessage: null,
 
@@ -782,108 +1049,479 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   userAssets: [],
 
-  resetDesign: () => {
-    localStorage.removeItem('caliqui_workspace');
-    set({
-      activeDesignId: null,
-      designName: 'Untitled Design',
-      decals: [],
-      selectedIds: [],
-      past: [],
-      future: [],
-      clipboard: [],
-      tshirtColor: '#ffffff',
-      apparelModel: 'tshirtman',
-      cameraView: 'front',
-      isDrawingMode: false,
-      globalToolMode: 'default',
+  resetDesign: async () => {
+    const startEpoch = ++editorAsyncEpoch;
+    ++initToken;
+    clearTimeout(saveTimeout);
+
+    const currentTransitionToken = ++activeTransitionToken;
+    let resolveTransition!: () => void;
+    const previousTransition = activeTransitionPromise;
+    activeTransitionPromise = new Promise<void>((resolve) => {
+      resolveTransition = resolve;
     });
+
+    try {
+      if (previousTransition) {
+        await previousTransition.catch(() => {});
+      }
+      if (activePersistenceMutex) {
+        await activePersistenceMutex.catch(() => {});
+      }
+
+      const p1 = clearWorkspaceFromDB();
+      const p2 = clearCheckpointFromDB();
+      activePersistenceMutex = Promise.allSettled([p1, p2]).then(() => {});
+      await activePersistenceMutex;
+
+      if (editorAsyncEpoch !== startEpoch) return;
+
+      set((state) => ({
+        editorRevision: state.editorRevision + 1,
+        decalAsyncGenerations: pruneGens(state.decalAsyncGenerations, []),
+        activeDesignId: null,
+        designName: 'Untitled Design',
+        remixSourceId: null,
+        decals: [],
+        selectedIds: [],
+        past: [],
+        future: [],
+        clipboard: [],
+        tshirtColor: '#ffffff',
+        apparelModel: 'tshirtman',
+        cameraView: 'front',
+        isDrawingMode: false,
+        editingDrawingId: null,
+        globalToolMode: 'default',
+        croppingDecalId: null,
+        marqueeStart: null,
+        marqueeEnd: null,
+        showMarqueeBox: false,
+        isProcessingBgRemoval: false,
+        bgRemovalActiveCount: 0,
+        bgRemovalProgress: 0,
+        isAiProcessing: false,
+        aiActiveCount: 0,
+        aiFeedbackMessage: null,
+        contextMenu: null,
+        isDragging: false,
+      }));
+    } finally {
+      resolveTransition();
+      if (activeTransitionToken === currentTransitionToken) {
+        activeTransitionPromise = null;
+      }
+    }
+  },
+
+  loadRemix: async (payload: RemixPayload) => {
+    const startEpoch = ++editorAsyncEpoch;
+    ++initToken;
+    clearTimeout(saveTimeout);
+
+    const currentTransitionToken = ++activeTransitionToken;
+    let resolveTransition!: () => void;
+    const previousTransition = activeTransitionPromise;
+    activeTransitionPromise = new Promise<void>((resolve) => {
+      resolveTransition = resolve;
+    });
+
+    try {
+      if (previousTransition) {
+        await previousTransition.catch(() => {});
+      }
+
+      let currentState = get();
+      let checkpointRevision = currentState.editorRevision;
+      const isDirty =
+        currentState.decals.length > 0 ||
+        currentState.tshirtColor !== '#ffffff' ||
+        currentState.apparelModel !== 'tshirtman' ||
+        currentState.activeDesignId !== null ||
+        currentState.remixSourceId !== null ||
+        currentState.designName !== 'Untitled Design';
+
+      if (isDirty) {
+        let saveCheckpointComplete = false;
+        while (!saveCheckpointComplete) {
+          let pendingAssetsExist = true;
+          while (pendingAssetsExist) {
+            pendingAssetsExist = false;
+
+            currentState = get();
+
+            const assetsToWait: Promise<void>[] = [];
+            for (const d of currentState.decals) {
+              if (d.assetId) {
+                const pState = pendingAssetSaves.get(d.assetId);
+                if (pState && pState.status === 'pending') {
+                  assetsToWait.push(pState.promise);
+                }
+              }
+            }
+            if (assetsToWait.length > 0) {
+              await Promise.allSettled(assetsToWait);
+            }
+
+            if (editorAsyncEpoch !== startEpoch) return;
+
+            if (get().editorRevision !== checkpointRevision) {
+              currentState = get();
+              checkpointRevision = currentState.editorRevision;
+              pendingAssetsExist = true;
+              break;
+            }
+
+            const assetsToRecover: DecalData[] = [];
+            for (const d of currentState.decals) {
+              if (d.assetId && failedAssetIds.has(d.assetId)) {
+                assetsToRecover.push(d);
+              }
+            }
+            if (assetsToRecover.length > 0) {
+              for (const d of assetsToRecover) {
+                if (!d.assetId) continue;
+                if (
+                  failedAssetIds.has(d.assetId) &&
+                  d.originalSrc &&
+                  isLocalBinary(d.originalSrc)
+                ) {
+                  try {
+                    const blob = await dataUrlToBlob(d.originalSrc);
+                    await saveAssetToDB(d.assetId, blob, d.aspectRatio || 1);
+                    await archiveAssetInDB(d.assetId);
+                    failedAssetIds.delete(d.assetId);
+                  } catch (_e) {
+                    throw new Error(
+                      `Cannot remix: the current workspace contains a failed asset that is unrecoverable. ID: ${d.assetId}`,
+                    );
+                  }
+                } else if (failedAssetIds.has(d.assetId)) {
+                  throw new Error(
+                    `Cannot remix: the current workspace contains a failed asset that is unrecoverable. ID: ${d.assetId}`,
+                  );
+                }
+              }
+              if (editorAsyncEpoch !== startEpoch) return;
+              if (get().editorRevision !== checkpointRevision) {
+                currentState = get();
+                checkpointRevision = currentState.editorRevision;
+                pendingAssetsExist = true;
+                break;
+              }
+            }
+          }
+
+          if (editorAsyncEpoch !== startEpoch) return;
+          if (get().editorRevision !== checkpointRevision) continue;
+
+          if (activePersistenceMutex) {
+            await activePersistenceMutex.catch(() => {});
+          }
+
+          if (editorAsyncEpoch !== startEpoch) return;
+          if (get().editorRevision !== checkpointRevision) {
+            currentState = get();
+            checkpointRevision = currentState.editorRevision;
+            continue;
+          }
+
+          let isCheckpointSafe = true;
+          for (const d of currentState.decals) {
+            if (d.assetId && failedAssetIds.has(d.assetId)) {
+              isCheckpointSafe = false;
+              break;
+            }
+          }
+
+          if (!isCheckpointSafe) {
+            throw new Error('Cannot remix: the current workspace contains a failed asset.');
+          }
+
+          const lightweightManifest = extractLightweightManifest(currentState.decals);
+          const snapshot = JSON.stringify({
+            decals: lightweightManifest,
+            tshirtColor: currentState.tshirtColor,
+            apparelModel: currentState.apparelModel,
+            activeDesignId: currentState.activeDesignId,
+            designName: currentState.designName,
+            remixSourceId: currentState.remixSourceId,
+          });
+
+          const p = saveCheckpointToDB(snapshot);
+          activePersistenceMutex = p;
+          await p;
+
+          if (editorAsyncEpoch !== startEpoch) return;
+          if (get().editorRevision !== checkpointRevision) {
+            currentState = get();
+            checkpointRevision = currentState.editorRevision;
+            continue;
+          }
+
+          saveCheckpointComplete = true;
+        }
+      } else {
+        if (activePersistenceMutex) {
+          await activePersistenceMutex.catch(() => {});
+        }
+      }
+
+      if (editorAsyncEpoch !== startEpoch) return;
+
+      const groupIdMap = new Map<string, string>();
+      const remixedDecals: DecalData[] = (payload.canvasState as DecalData[]).map((d) => {
+        const newId = crypto.randomUUID();
+        let newGroupId = d.groupId;
+
+        if (d.groupId) {
+          if (!groupIdMap.has(d.groupId)) {
+            groupIdMap.set(d.groupId, crypto.randomUUID());
+          }
+          newGroupId = groupIdMap.get(d.groupId);
+        }
+
+        return {
+          ...d,
+          id: newId,
+          groupId: newGroupId,
+          assetId: undefined,
+          needsInitialPlacement: false,
+        };
+      });
+
+      set((state) => ({
+        editorRevision: state.editorRevision + 1,
+        decalAsyncGenerations: pruneGens(state.decalAsyncGenerations, remixedDecals),
+        activeDesignId: null,
+        designName: `Remix of ${payload.name}`,
+        remixSourceId: payload.id,
+        decals: remixedDecals,
+        tshirtColor: payload.tshirtColor,
+        apparelModel: payload.apparelModel,
+        selectedIds: [],
+        past: [],
+        future: [],
+        clipboard: [],
+        isDrawingMode: false,
+        editingDrawingId: null,
+        globalToolMode: 'default',
+        croppingDecalId: null,
+        marqueeStart: null,
+        marqueeEnd: null,
+        showMarqueeBox: false,
+        isProcessingBgRemoval: false,
+        bgRemovalActiveCount: 0,
+        bgRemovalProgress: 0,
+        isAiProcessing: false,
+        aiActiveCount: 0,
+        aiFeedbackMessage: null,
+        contextMenu: null,
+        isDragging: false,
+      }));
+    } finally {
+      resolveTransition();
+      if (activeTransitionToken === currentTransitionToken) {
+        activeTransitionPromise = null;
+      }
+    }
   },
 
   init: async () => {
-    let loadedAssets: UserAsset[] = [];
-    try {
-      const dbAssets = await getAllAssetsFromDB();
-      loadedAssets = dbAssets.map((a) => ({
-        id: a.id,
-        src: URL.createObjectURL(a.blob),
-        aspectRatio: a.aspectRatio,
-      }));
-    } catch (e) {
-      console.error('Failed to load user assets from DB', e);
-    }
+    const startEpoch = ++editorAsyncEpoch;
+    const currentToken = ++initToken;
+    activeInitCount++;
+    isInitializing = true;
+    clearTimeout(saveTimeout);
 
-    let initialDecals: DecalData[] = [];
-    let initialColor = '#ffffff';
-    let initialModel: ApparelModelType = 'tshirtman';
-    let initialActiveId: string | null = null;
-    let initialDesignName = 'Untitled Design';
-
-    try {
-      const storedWorkspace = localStorage.getItem('caliqui_workspace');
-      if (storedWorkspace) {
-        const parsed = JSON.parse(storedWorkspace);
-        initialColor = parsed.tshirtColor || '#ffffff';
-        initialModel = parsed.apparelModel || 'tshirtman';
-        initialDecals = parsed.decals || [];
-        initialActiveId = parsed.activeDesignId || null;
-        initialDesignName = parsed.designName || 'Untitled Design';
-      }
-    } catch (e) {
-      console.error('Failed to load workspace', e);
-    }
-
-    set({
-      activeDesignId: initialActiveId,
-      designName: initialDesignName,
-      decals: initialDecals,
-      selectedIds: [],
-      isDragging: false,
-      autoSelect: true,
-      isDrawingMode: false,
-      editingDrawingId: null,
-      globalToolMode: 'default',
-      brushSettings: { size: 40, color: '#000000', intensity: 50 },
-      marqueeStart: null,
-      marqueeEnd: null,
-      showMarqueeBox: false,
-      past: [],
-      future: [],
-      clipboard: [],
-      isProcessingBgRemoval: false,
-      bgRemovalProgress: 0,
-      tshirtColor: initialColor,
-      apparelModel: initialModel,
-      cameraView: 'front',
-      userAssets: loadedAssets,
-      isAiProcessing: false,
-      aiFeedbackMessage: null,
+    const currentTransitionToken = ++activeTransitionToken;
+    let resolveTransition!: () => void;
+    const previousTransition = activeTransitionPromise;
+    activeTransitionPromise = new Promise<void>((resolve) => {
+      resolveTransition = resolve;
     });
 
-    if (initialDecals.length > 0) {
-      Promise.all(
-        initialDecals.map(async (d) => {
-          if (d.type === 'shape' || d.type === 'text') {
-            const baseSrc = generateAssetTexture(d);
-            const { src: finalSrc, aspectRatio } = await applyImageFilters({
-              ...d,
-              originalSrc: baseSrc,
-            });
-            return { ...d, src: finalSrc, originalSrc: baseSrc, aspectRatio };
-          } else if (d.type === 'image' || d.type === 'drawing') {
-            const { src: finalSrc, aspectRatio } = await applyImageFilters(d);
-            return { ...d, src: finalSrc, aspectRatio };
-          }
-          return d;
-        }),
-      ).then((hydrated) => {
-        set({ decals: hydrated });
-        get().saveHistory();
+    const locallyCreatedUrls = new Set<string>();
+
+    try {
+      if (previousTransition) {
+        await previousTransition.catch(() => {});
+      }
+
+      if (activePersistenceMutex) {
+        await activePersistenceMutex.catch(() => {});
+      }
+
+      if (currentToken !== initToken || editorAsyncEpoch !== startEpoch) {
+        return;
+      }
+
+      let loadedAssets: UserAsset[] = [];
+      try {
+        const dbAssets = await getAllAssetsFromDB();
+        loadedAssets = dbAssets.map((a) => {
+          const url = URL.createObjectURL(a.blob);
+          locallyCreatedUrls.add(url);
+          return { id: a.id, src: url, aspectRatio: a.aspectRatio };
+        });
+      } catch (e) {
+        console.error('Failed to load active user assets from DB', e);
+      }
+
+      if (currentToken !== initToken || editorAsyncEpoch !== startEpoch) {
+        locallyCreatedUrls.forEach((u) => {
+          URL.revokeObjectURL(u);
+        });
+        locallyCreatedUrls.clear();
+        return;
+      }
+
+      let initialDecals: DecalData[] = [];
+      let initialColor = '#ffffff';
+      let initialModel: ApparelModelType = 'tshirtman';
+      let initialActiveId: string | null = null;
+      let initialDesignName = 'Untitled Design';
+      let initialRemixId: string | null = null;
+
+      try {
+        const storedWorkspace = await loadWorkspaceFromDB();
+        if (storedWorkspace) {
+          const parsed = JSON.parse(storedWorkspace);
+          initialColor = parsed.tshirtColor || '#ffffff';
+          initialModel = parsed.apparelModel || 'tshirtman';
+          initialDecals = parsed.decals || [];
+          initialActiveId = parsed.activeDesignId || null;
+          initialDesignName = parsed.designName || 'Untitled Design';
+          initialRemixId = parsed.remixSourceId || null;
+        }
+      } catch (e) {
+        console.error('Failed to load workspace from DB', e);
+      }
+
+      if (currentToken !== initToken || editorAsyncEpoch !== startEpoch) {
+        locallyCreatedUrls.forEach((u) => {
+          URL.revokeObjectURL(u);
+        });
+        locallyCreatedUrls.clear();
+        return;
+      }
+
+      let hydrated: DecalData[] = [];
+      if (initialDecals.length > 0) {
+        hydrated = await Promise.all(
+          initialDecals.map(async (d) => {
+            let rehydratedOriginalSrc = d.originalSrc;
+
+            if (d.assetId) {
+              try {
+                const localDbAsset = await getAssetByIdFromDB(d.assetId);
+                if (localDbAsset?.blob) {
+                  rehydratedOriginalSrc = URL.createObjectURL(localDbAsset.blob);
+                  locallyCreatedUrls.add(rehydratedOriginalSrc);
+                } else {
+                  const {
+                    data: { user },
+                  } = await supabase.auth.getUser();
+                  if (user) {
+                    const { data: cloudAsset } = await supabase
+                      .from('assets')
+                      .select('storage_path')
+                      .eq('id', d.assetId)
+                      .eq('user_id', user.id)
+                      .maybeSingle();
+
+                    if (cloudAsset?.storage_path) {
+                      rehydratedOriginalSrc = supabase.storage
+                        .from('user-assets')
+                        .getPublicUrl(cloudAsset.storage_path).data.publicUrl;
+                    }
+                  }
+                }
+              } catch (e) {
+                console.warn(`Failed to rehydrate asset ${d.assetId}`, e);
+              }
+            }
+
+            if (d.type === 'shape' || d.type === 'text') {
+              const baseSrc = generateAssetTexture(d);
+              const { src: finalSrc, aspectRatio } = await applyImageFilters({
+                ...d,
+                originalSrc: baseSrc,
+              });
+              return { ...d, src: finalSrc, originalSrc: baseSrc, aspectRatio };
+            } else if (d.type === 'image' || d.type === 'drawing') {
+              const { src: finalSrc, aspectRatio } = await applyImageFilters({
+                ...d,
+                originalSrc: rehydratedOriginalSrc,
+              });
+              return { ...d, src: finalSrc, originalSrc: rehydratedOriginalSrc, aspectRatio };
+            }
+            return d;
+          }),
+        );
+      }
+
+      if (currentToken !== initToken || editorAsyncEpoch !== startEpoch) {
+        locallyCreatedUrls.forEach((u) => {
+          URL.revokeObjectURL(u);
+        });
+        locallyCreatedUrls.clear();
+        return;
+      }
+
+      set((state) => ({
+        editorRevision: state.editorRevision + 1,
+        activeDesignId: initialActiveId,
+        designName: initialDesignName,
+        remixSourceId: initialRemixId,
+        decals: hydrated,
+        selectedIds: [],
+        isDragging: false,
+        autoSelect: true,
+        isDrawingMode: false,
+        editingDrawingId: null,
+        globalToolMode: 'default',
+        brushSettings: { size: 40, color: '#000000', intensity: 50 },
+        marqueeStart: null,
+        marqueeEnd: null,
+        showMarqueeBox: false,
+        past: [],
+        future: [],
+        clipboard: [],
+        isProcessingBgRemoval: false,
+        bgRemovalActiveCount: 0,
+        bgRemovalProgress: 0,
+        tshirtColor: initialColor,
+        apparelModel: initialModel,
+        cameraView: 'front',
+        userAssets: loadedAssets,
+        isAiProcessing: false,
+        aiActiveCount: 0,
+        aiFeedbackMessage: null,
+        decalAsyncGenerations: pruneGens(state.decalAsyncGenerations, hydrated),
+      }));
+
+      locallyCreatedUrls.clear();
+    } catch (e) {
+      locallyCreatedUrls.forEach((u) => {
+        URL.revokeObjectURL(u);
       });
+      locallyCreatedUrls.clear();
+      console.error('Workspace init failed', e);
+    } finally {
+      activeInitCount--;
+      if (activeInitCount === 0) {
+        isInitializing = false;
+      }
+      resolveTransition();
+      if (activeTransitionToken === currentTransitionToken) {
+        activeTransitionPromise = null;
+      }
     }
   },
 
-  setDesignName: (name) => set({ designName: name }),
+  setDesignName: (name) =>
+    set((state) => ({ designName: name, editorRevision: state.editorRevision + 1 })),
 
   saveHistory: () => {
     const { decals, past } = get();
@@ -906,35 +1544,62 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }),
 
   setSelectedIds: (ids) => set({ selectedIds: ids }),
-
   selectAll: () => set((state) => ({ selectedIds: state.decals.map((d) => d.id) })),
   setIsDragging: (val) => set({ isDragging: val }),
   setAutoSelect: (val) => set({ autoSelect: val }),
-
   setDrawingMode: (val) => set({ isDrawingMode: val }),
   setEditingDrawingId: (id) => set({ editingDrawingId: id }),
   setGlobalToolMode: (tool) => set({ globalToolMode: tool }),
   setBrushSettings: (settings) =>
     set((state) => ({ brushSettings: { ...state.brushSettings, ...settings } })),
   setCroppingDecalId: (id) => set({ croppingDecalId: id }),
-
   setMarqueeStart: (pt) => set({ marqueeStart: pt }),
   setMarqueeEnd: (pt) => set({ marqueeEnd: pt }),
   setShowMarqueeBox: (show) => set({ showMarqueeBox: show }),
-
   setContextMenu: (menu) => set({ contextMenu: menu }),
 
-  addTool: (type, imageSrc, shapeType, overrides) => {
-    get().saveHistory();
+  addTool: (type, imageSrc, shapeType, overrides, noHistory = false) => {
+    if (!noHistory) get().saveHistory();
 
     const defaultConfig = getDefaultConfig(type);
     defaultConfig.type = type;
-    defaultConfig.text = type === 'text' ? overrides?.text || 'CALIQUI' : undefined;
+
+    let textDefault: string | undefined;
+    if (type === 'text') {
+      if (typeof overrides?.text === 'string') {
+        textDefault = overrides.text;
+      } else {
+        textDefault = 'CALIQUI';
+      }
+    }
+    defaultConfig.text = textDefault;
 
     if (shapeType) defaultConfig.shapeType = shapeType;
 
-    const mergedConfig = { ...defaultConfig, ...overrides };
+    let hasValidPosition = false;
+    let safePosition: [number, number, number] = [0, 0, 0];
+    const overridePos = overrides?.position;
+    if (Array.isArray(overridePos) && overridePos.length === 3) {
+      hasValidPosition = true;
+      safePosition = [
+        safeNum(overridePos[0], -2, 2, 0),
+        safeNum(overridePos[1], -2, 2, 0),
+        safeNum(overridePos[2], -2, 2, 0),
+      ];
+    }
 
+    let safeRotation: [number, number, number] = [0, 0, 0];
+    const overrideRot = overrides?.rotation;
+    if (Array.isArray(overrideRot) && overrideRot.length === 3) {
+      safeRotation = [
+        safeNum(overrideRot[0], -Math.PI * 2, Math.PI * 2, 0),
+        safeNum(overrideRot[1], -Math.PI * 2, Math.PI * 2, 0),
+        safeNum(overrideRot[2], -Math.PI * 2, Math.PI * 2, 0),
+      ];
+    }
+
+    const mergedConfig = { ...defaultConfig, ...overrides };
+    const safeScale = safeNum(mergedConfig.scale, 0.01, 10, 0.2);
     const src =
       (type === 'image' || type === 'drawing') && imageSrc
         ? imageSrc
@@ -947,8 +1612,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           .join(' ')
       : 'Rectangle';
 
+    const finalId = crypto.randomUUID();
+
     const newDecal: DecalData = {
-      id: crypto.randomUUID(),
+      ...defaultConfig,
+      ...overrides,
+      id: finalId,
       type,
       name:
         type === 'text'
@@ -960,105 +1629,372 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               : 'Image',
       src,
       originalSrc: type === 'image' || type === 'drawing' ? src : undefined,
-      // FIX: Force safe chest projection coordinates upon instantiation
-      position: overrides?.position || [0, 0, 0],
-      rotation: overrides?.rotation || [0, 0, 0],
-      ...defaultConfig,
-      ...overrides,
-    } as DecalData;
+      position: safePosition,
+      rotation: safeRotation,
+      scale: safeScale,
+      needsInitialPlacement: !hasValidPosition,
+      assetId: undefined,
+    };
+    if ((type === 'image' || type === 'drawing') && isLocalBinary(src)) {
+      const newAssetId = crypto.randomUUID();
+      newDecal.assetId = newAssetId;
+
+      const pState: AssetPersistenceState = { promise: Promise.resolve(), status: 'pending' };
+
+      pState.promise = dataUrlToBlob(src)
+        .then((blob) => saveAssetToDB(newAssetId, blob, mergedConfig.aspectRatio || 1))
+        .then(() => archiveAssetInDB(newAssetId))
+        .then(() => {
+          pState.status = 'success';
+          pendingAssetSaves.delete(newAssetId);
+          failedAssetIds.delete(newAssetId);
+        })
+        .catch((e) => {
+          console.error('Asset persistence failed:', e);
+          pState.status = 'failed';
+          failedAssetIds.add(newAssetId);
+          pendingAssetSaves.delete(newAssetId);
+        });
+
+      pendingAssetSaves.set(newAssetId, pState);
+    }
 
     set((state) => {
       const isGroupedExtract = !!overrides?.groupId;
+      const nextDecals = [...state.decals, newDecal];
       return {
-        decals: [...state.decals, newDecal],
+        decals: nextDecals,
         selectedIds: isGroupedExtract ? [...state.selectedIds, newDecal.id] : [newDecal.id],
+        editorRevision: state.editorRevision + 1,
+        decalAsyncGenerations: {
+          ...pruneGens(state.decalAsyncGenerations, nextDecals),
+          [finalId]: 1,
+        },
       };
     });
   },
 
   updateDecal: (id, updates) =>
+    set((state) => {
+      const index = state.decals.findIndex((d) => d.id === id);
+      if (index === -1) return state;
+
+      const {
+        id: _id,
+        type: _type,
+        assetId: _assetId,
+        src: _src,
+        originalSrc: _originalSrc,
+        needsInitialPlacement: _nip,
+        ...safeUpdates
+      } = updates as Partial<DecalData>;
+
+      const nextDecals = state.decals.map((d) => (d.id === id ? { ...d, ...safeUpdates } : d));
+      return {
+        decals: nextDecals,
+        editorRevision: state.editorRevision + 1,
+        decalAsyncGenerations: {
+          ...state.decalAsyncGenerations,
+          [id]: (state.decalAsyncGenerations[id] || 0) + 1,
+        },
+      };
+    }),
+
+  setDecalVisibility: (id, visible) => {
+    const current = get().decals.find((decal) => decal.id === id);
+    if (!current || (current.visible !== false) === visible) return;
+    get().saveHistory();
     set((state) => ({
-      decals: state.decals.map((d) => (d.id === id ? { ...d, ...updates } : d)),
-    })),
+      decals: state.decals.map((decal) => (decal.id === id ? { ...decal, visible } : decal)),
+      selectedIds: visible ? state.selectedIds : state.selectedIds.filter((selectedId) => selectedId !== id),
+      editorRevision: state.editorRevision + 1,
+      decalAsyncGenerations: {
+        ...state.decalAsyncGenerations,
+        [id]: (state.decalAsyncGenerations[id] || 0) + 1,
+      },
+    }));
+  },
+
+  setDecalLocked: (id, locked) => {
+    const current = get().decals.find((decal) => decal.id === id);
+    if (!current || Boolean(current.locked) === locked) return;
+    get().saveHistory();
+    set((state) => ({
+      decals: state.decals.map((decal) => (decal.id === id ? { ...decal, locked } : decal)),
+      editorRevision: state.editorRevision + 1,
+      decalAsyncGenerations: {
+        ...state.decalAsyncGenerations,
+        [id]: (state.decalAsyncGenerations[id] || 0) + 1,
+      },
+    }));
+  },
+
+  // Layer list is displayed top-to-bottom, while the render stack is stored
+  // bottom-to-top. Reorder using the same visible order users interact with.
+  reorderLayer: (id, targetId) => {
+    const current = get().decals;
+    if (id === targetId) return;
+    const source = current.find((decal) => decal.id === id);
+    const target = current.find((decal) => decal.id === targetId);
+    if (!source || !target || source.groupId !== target.groupId) return;
+
+    const visibleOrder = [...current].reverse();
+    const from = visibleOrder.findIndex((decal) => decal.id === id);
+    const to = visibleOrder.findIndex((decal) => decal.id === targetId);
+    if (from < 0 || to < 0) return;
+
+    const nextVisible = [...visibleOrder];
+    const [moving] = nextVisible.splice(from, 1);
+    const targetIndex = nextVisible.findIndex((decal) => decal.id === targetId);
+    if (targetIndex < 0) return;
+    nextVisible.splice(targetIndex, 0, moving);
+    if (nextVisible.every((decal, index) => decal.id === visibleOrder[index]?.id)) return;
+
+    get().saveHistory();
+    set((state) => ({
+      decals: nextVisible.reverse(),
+      editorRevision: state.editorRevision + 1,
+      decalAsyncGenerations: {
+        ...state.decalAsyncGenerations,
+        [id]: (state.decalAsyncGenerations[id] || 0) + 1,
+      },
+    }));
+  },
+
+  replaceDecalImage: async (id, blob, aspectRatio) => {
+    const existing = get().decals.find((decal) => decal.id === id);
+    if (!existing || (existing.type !== 'image' && existing.type !== 'drawing')) {
+      throw new Error('Only image and drawing layers can be replaced.');
+    }
+
+    const safeAspectRatio = Number.isFinite(aspectRatio) && aspectRatio > 0 ? aspectRatio : 1;
+    const assetId = crypto.randomUUID();
+    const originalSrc = URL.createObjectURL(blob);
+
+    try {
+      // Keep the source durable without adding it to the six-item reusable asset dock.
+      await saveAssetToDB(assetId, blob, safeAspectRatio);
+      await archiveAssetInDB(assetId);
+
+      const filtered = await applyImageFilters({
+        ...existing,
+        originalSrc,
+        aspectRatio: safeAspectRatio,
+        cropX: 0,
+        cropY: 0,
+        cropW: 100,
+        cropH: 100,
+      });
+
+      const latest = get().decals.find((decal) => decal.id === id);
+      if (!latest) {
+        URL.revokeObjectURL(originalSrc);
+        return;
+      }
+
+      get().saveHistory();
+      set((state) => ({
+        decals: state.decals.map((decal) =>
+          decal.id === id
+            ? {
+                ...decal,
+                assetId,
+                src: filtered.src,
+                originalSrc,
+                aspectRatio: filtered.aspectRatio || safeAspectRatio,
+                cropX: 0,
+                cropY: 0,
+                cropW: 100,
+                cropH: 100,
+              }
+            : decal,
+        ),
+        editorRevision: state.editorRevision + 1,
+        decalAsyncGenerations: {
+          ...state.decalAsyncGenerations,
+          [id]: (state.decalAsyncGenerations[id] || 0) + 1,
+        },
+      }));
+    } catch (error) {
+      URL.revokeObjectURL(originalSrc);
+      throw error;
+    }
+  },
 
   updateText: async (id, newText) => {
-    get().saveHistory();
-    const decal = get().decals.find((d) => d.id === id);
-    if (decal?.type !== 'text') return;
+    const stateBefore = get();
+    const decalBefore = stateBefore.decals.find((d) => d.id === id);
+    if (decalBefore?.type !== 'text' || decalBefore.text === newText) return;
 
-    const updatedDecal = { ...decal, text: newText };
+    const startEpoch = editorAsyncEpoch;
+
+    set((state) => ({
+      editorRevision: state.editorRevision + 1,
+      decalAsyncGenerations: {
+        ...state.decalAsyncGenerations,
+        [id]: (state.decalAsyncGenerations[id] || 0) + 1,
+      },
+    }));
+
+    const newGen = get().decalAsyncGenerations[id];
+    const updatedDecal = { ...decalBefore, text: newText };
     const baseSrc = generateAssetTexture(updatedDecal);
     const { src: finalSrc, aspectRatio } = await applyImageFilters({
       ...updatedDecal,
       originalSrc: baseSrc,
     });
 
+    if (editorAsyncEpoch !== startEpoch) return;
+    if (get().decalAsyncGenerations[id] !== newGen) return;
+
+    const decalAfter = get().decals.find((d) => d.id === id);
+    if (decalAfter?.type !== 'text') return;
+
+    get().saveHistory();
+
     set((state) => ({
       decals: state.decals.map((d) =>
         d.id === id ? { ...d, text: newText, src: finalSrc, aspectRatio } : d,
       ),
+      editorRevision: state.editorRevision + 1,
+      decalAsyncGenerations: { ...state.decalAsyncGenerations, [id]: newGen + 1 },
     }));
   },
 
-  removeDecal: (id) => {
-    get().saveHistory();
-    set((state) => ({
-      decals: state.decals.filter((d) => d.id !== id),
-      selectedIds: state.selectedIds.filter((sid) => sid !== id),
-      isDragging: false,
-    }));
+  removeDecal: (id, noHistory = false) => {
+    const state = get();
+    if (!state.decals.some((d) => d.id === id)) return;
+    if (!noHistory) state.saveHistory();
+
+    set((state) => {
+      const nextDecals = state.decals.filter((d) => d.id !== id);
+      return {
+        decals: nextDecals,
+        selectedIds: state.selectedIds.filter((sid) => sid !== id),
+        isDragging: false,
+        editorRevision: state.editorRevision + 1,
+        decalAsyncGenerations: pruneGens(state.decalAsyncGenerations, nextDecals),
+      };
+    });
   },
 
   deleteSelected: () => {
     const { selectedIds, decals } = get();
     if (selectedIds.length === 0) return;
     get().saveHistory();
-    set({
-      decals: decals.filter((d) => !selectedIds.includes(d.id)),
-      selectedIds: [],
+    set((state) => {
+      const newGens = { ...state.decalAsyncGenerations };
+      selectedIds.forEach((id) => {
+        newGens[id] = (newGens[id] || 0) + 1;
+      });
+      const nextDecals = decals.filter((d) => !selectedIds.includes(d.id));
+      return {
+        decals: nextDecals,
+        selectedIds: [],
+        editorRevision: state.editorRevision + 1,
+        decalAsyncGenerations: pruneGens(newGens, nextDecals),
+      };
     });
   },
 
   moveLayerUp: (id) => {
-    get().saveHistory();
+    const state = get();
+    const index = state.decals.findIndex((d) => d.id === id);
+    if (index === -1 || index === state.decals.length - 1) return;
+
+    state.saveHistory();
     set((state) => {
-      const index = state.decals.findIndex((d) => d.id === id);
-      if (index === -1 || index === state.decals.length - 1) return state;
       const newDecals = [...state.decals];
       [newDecals[index], newDecals[index + 1]] = [newDecals[index + 1], newDecals[index]];
-      return { decals: newDecals };
+      return {
+        decals: newDecals,
+        editorRevision: state.editorRevision + 1,
+        decalAsyncGenerations: {
+          ...state.decalAsyncGenerations,
+          [id]: (state.decalAsyncGenerations[id] || 0) + 1,
+        },
+      };
     });
   },
 
   moveLayerDown: (id) => {
-    get().saveHistory();
+    const state = get();
+    const index = state.decals.findIndex((d) => d.id === id);
+    if (index <= 0) return;
+
+    state.saveHistory();
     set((state) => {
-      const index = state.decals.findIndex((d) => d.id === id);
-      if (index <= 0) return state;
       const newDecals = [...state.decals];
       [newDecals[index - 1], newDecals[index]] = [newDecals[index], newDecals[index - 1]];
-      return { decals: newDecals };
+      return {
+        decals: newDecals,
+        editorRevision: state.editorRevision + 1,
+        decalAsyncGenerations: {
+          ...state.decalAsyncGenerations,
+          [id]: (state.decalAsyncGenerations[id] || 0) + 1,
+        },
+      };
     });
   },
 
   undo: () => {
-    const { past, decals, future } = get();
+    const { past, decals, future, editorRevision, decalAsyncGenerations } = get();
     if (past.length === 0) return;
+
+    ++editorAsyncEpoch;
     const previous = past[past.length - 1];
     const newPast = past.slice(0, past.length - 1);
+
+    const newGens = { ...decalAsyncGenerations };
+    previous.forEach((d) => {
+      newGens[d.id] = (newGens[d.id] || 0) + 1;
+    });
+    decals.forEach((d) => {
+      newGens[d.id] = (newGens[d.id] || 0) + 1;
+    });
+
     set({
       past: newPast,
       decals: previous,
       future: [JSON.parse(JSON.stringify(decals)), ...future],
+      editorRevision: editorRevision + 1,
+      decalAsyncGenerations: pruneGens(newGens, previous),
+      bgRemovalActiveCount: 0,
+      isProcessingBgRemoval: false,
+      bgRemovalProgress: 0,
+      aiActiveCount: 0,
+      isAiProcessing: false,
     });
   },
 
   redo: () => {
-    const { past, decals, future } = get();
+    const { past, decals, future, editorRevision, decalAsyncGenerations } = get();
     if (future.length === 0) return;
+
+    ++editorAsyncEpoch;
     const next = future[0];
     const newFuture = future.slice(1);
-    set({ past: [...past, JSON.parse(JSON.stringify(decals))], decals: next, future: newFuture });
+
+    const newGens = { ...decalAsyncGenerations };
+    next.forEach((d) => {
+      newGens[d.id] = (newGens[d.id] || 0) + 1;
+    });
+    decals.forEach((d) => {
+      newGens[d.id] = (newGens[d.id] || 0) + 1;
+    });
+
+    set({
+      past: [...past, JSON.parse(JSON.stringify(decals))],
+      decals: next,
+      future: newFuture,
+      editorRevision: editorRevision + 1,
+      decalAsyncGenerations: pruneGens(newGens, next),
+      bgRemovalActiveCount: 0,
+      isProcessingBgRemoval: false,
+      bgRemovalProgress: 0,
+      aiActiveCount: 0,
+      isAiProcessing: false,
+    });
   },
 
   copy: () => {
@@ -1076,16 +2012,35 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const { clipboard, decals } = get();
     if (clipboard.length === 0) return;
     get().saveHistory();
-    const newDecals = clipboard.map((d) => ({
-      ...d,
-      id: crypto.randomUUID(),
-      position: [d.position[0] + 0.05, d.position[1] - 0.05, d.position[2]] as [
-        number,
-        number,
-        number,
-      ],
+
+    const groupIdMap = new Map<string, string>();
+
+    const newDecals = clipboard.map((d) => {
+      let newGroupId = d.groupId;
+      if (d.groupId) {
+        if (!groupIdMap.has(d.groupId)) {
+          groupIdMap.set(d.groupId, crypto.randomUUID());
+        }
+        newGroupId = groupIdMap.get(d.groupId);
+      }
+
+      return {
+        ...d,
+        id: crypto.randomUUID(),
+        groupId: newGroupId,
+        needsInitialPlacement: false,
+        position: [d.position[0] + 0.05, d.position[1] - 0.05, d.position[2]] as [
+          number,
+          number,
+          number,
+        ],
+      };
+    });
+    set((state) => ({
+      decals: [...decals, ...newDecals],
+      selectedIds: newDecals.map((d) => d.id),
+      editorRevision: state.editorRevision + 1,
     }));
-    set({ decals: [...decals, ...newDecals], selectedIds: newDecals.map((d) => d.id) });
   },
 
   duplicate: () => {
@@ -1096,203 +2051,386 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   groupSelected: () => {
     const { selectedIds, decals } = get();
     if (selectedIds.length < 2) return;
-
     get().saveHistory();
     const newGroupId = crypto.randomUUID();
-
-    set({
+    set((state) => ({
       decals: decals.map((d) => (selectedIds.includes(d.id) ? { ...d, groupId: newGroupId } : d)),
-    });
+      editorRevision: state.editorRevision + 1,
+    }));
   },
 
   removeFromGroup: () => {
     const { selectedIds, decals } = get();
     if (selectedIds.length === 0) return;
-
     get().saveHistory();
-    set({
+    set((state) => ({
       decals: decals.map((d) => (selectedIds.includes(d.id) ? { ...d, groupId: undefined } : d)),
-    });
+      editorRevision: state.editorRevision + 1,
+    }));
   },
 
   breakGroup: () => {
     const { selectedIds, decals } = get();
     if (selectedIds.length === 0) return;
-
     const targetDecal = decals.find((d) => selectedIds.includes(d.id) && d.groupId);
     if (!targetDecal?.groupId) return;
-
     get().saveHistory();
-    set({
+    set((state) => ({
       decals: decals.map((d) =>
         d.groupId === targetDecal.groupId ? { ...d, groupId: undefined } : d,
       ),
-    });
+      editorRevision: state.editorRevision + 1,
+    }));
   },
 
   applyBackgroundRemoval: async (id) => {
-    const state = get();
-    const decal = state.decals.find((d) => d.id === id);
-    if (!decal?.src || (decal.type !== 'image' && decal.type !== 'drawing')) return;
+    const stateBefore = get();
+    const decalBefore = stateBefore.decals.find((d) => d.id === id);
+    if (!decalBefore?.src || (decalBefore.type !== 'image' && decalBefore.type !== 'drawing'))
+      return;
 
-    set({ isProcessingBgRemoval: true, bgRemovalProgress: 0 });
+    const originalSrcAtStart = decalBefore.originalSrc || decalBefore.src;
+    const startEpoch = editorAsyncEpoch;
+
+    set((state) => ({
+      editorRevision: state.editorRevision + 1,
+      decalAsyncGenerations: {
+        ...state.decalAsyncGenerations,
+        [id]: (state.decalAsyncGenerations[id] || 0) + 1,
+      },
+      bgRemovalActiveCount: state.bgRemovalActiveCount + 1,
+      isProcessingBgRemoval: true,
+      bgRemovalProgress: 0,
+    }));
+
+    const newGen = get().decalAsyncGenerations[id];
 
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     try {
       const { removeImageBackground } = await import('@/shared/utils/ai-engine');
+      const removedSrc = await removeImageBackground(originalSrcAtStart, (progress) => {
+        if (editorAsyncEpoch === startEpoch && get().decalAsyncGenerations[id] === newGen) {
+          set({ bgRemovalProgress: progress });
+        }
+      });
 
-      const removedSrc = await removeImageBackground(decal.originalSrc || decal.src, (progress) =>
-        set({ bgRemovalProgress: progress }),
-      );
+      if (editorAsyncEpoch !== startEpoch || get().decalAsyncGenerations[id] !== newGen) return;
+
+      const decalAfterBg = get().decals.find((d) => d.id === id);
+      if (!decalAfterBg) return;
 
       const { src: finalSrc, aspectRatio } = await applyImageFilters({
-        ...decal,
+        ...decalAfterBg,
         originalSrc: removedSrc,
       });
 
+      if (editorAsyncEpoch !== startEpoch || get().decalAsyncGenerations[id] !== newGen) return;
+
+      const derivedAssetId = crypto.randomUUID();
+      const derivedBlob = await dataUrlToBlob(removedSrc);
+
+      if (editorAsyncEpoch !== startEpoch || get().decalAsyncGenerations[id] !== newGen) return;
+
+      await saveAssetToDB(derivedAssetId, derivedBlob, aspectRatio);
+      await archiveAssetInDB(derivedAssetId);
+
+      if (editorAsyncEpoch !== startEpoch || get().decalAsyncGenerations[id] !== newGen) {
+        await deleteAssetFromDB(derivedAssetId);
+        return;
+      }
+
       get().saveHistory();
-      get().updateDecal(id, {
-        src: finalSrc,
-        originalSrc: removedSrc,
-        aspectRatio,
-      });
+
+      set((state) => ({
+        decals: state.decals.map((d) =>
+          d.id === id
+            ? { ...d, src: finalSrc, originalSrc: removedSrc, aspectRatio, assetId: derivedAssetId }
+            : d,
+        ),
+        editorRevision: state.editorRevision + 1,
+        decalAsyncGenerations: { ...state.decalAsyncGenerations, [id]: newGen + 1 },
+      }));
     } catch (error) {
       console.error('Failed to remove background', error);
     } finally {
-      set({ isProcessingBgRemoval: false, bgRemovalProgress: 0 });
+      if (editorAsyncEpoch === startEpoch) {
+        set((state) => {
+          const newCount = Math.max(0, state.bgRemovalActiveCount - 1);
+          return {
+            bgRemovalActiveCount: newCount,
+            isProcessingBgRemoval: newCount > 0,
+            bgRemovalProgress: 0,
+          };
+        });
+      }
     }
   },
 
-  dispatchAiCommand: async (prompt: string, targetId?: string) => {
-    set({ isAiProcessing: true, aiFeedbackMessage: null });
-    const { decals, saveHistory, updateDecal, setTshirtColor, addTool, removeDecal } = get();
+  dispatchAiCommand: async (prompt: string, targetIds: string[] = []) => {
+    const cleanPrompt = prompt.trim();
+    if (!cleanPrompt) {
+      set({ aiFeedbackMessage: 'Describe the change you want to make first.' });
+      return;
+    }
 
-    const manifest = decals.map((d) => {
-      const { src, originalSrc, ...lightweightData } = d;
-      return lightweightData;
-    });
+    const startState = get();
+    const startRev = startState.editorRevision;
+    const startEpoch = editorAsyncEpoch;
+    const validSelectedIds = [...new Set(targetIds)].filter((id) =>
+      startState.decals.some((decal) => decal.id === id),
+    ).slice(0, 60);
+    const selectedManifestIds = new Set(validSelectedIds);
+    const manifest = extractLightweightManifest(startState.decals)
+      .sort((a, b) => Number(selectedManifestIds.has(b.id)) - Number(selectedManifestIds.has(a.id)))
+      .slice(0, 100)
+      .map((decal) => {
+        const { src: _src, originalSrc: _originalSrc, assetId: _assetId, ...safeDecal } = decal;
+        return safeDecal;
+      });
 
-    const enhancedPrompt = targetId ? `[Focus Layer ID: ${targetId}] ${prompt}` : prompt;
+    set((state) => ({
+      aiActiveCount: state.aiActiveCount + 1,
+      isAiProcessing: true,
+      aiFeedbackMessage: null,
+    }));
 
     try {
       const { data, error } = await supabase.functions.invoke('ai-editor', {
-        body: { prompt: enhancedPrompt, decalState: manifest },
+        body: {
+          prompt: cleanPrompt,
+          decalState: manifest,
+          selectedIds: validSelectedIds,
+          workspaceState: {
+            tshirtColor: startState.tshirtColor,
+            apparelModel: startState.apparelModel,
+          },
+        },
       });
 
-      if (error) throw new Error(error.message);
-      const result = data;
+      if (error) {
+        const status = (error as unknown as { context?: { status?: number } }).context?.status;
+        if (status === 401 || status === 403) throw new Error('Please sign in again before using the AI Workmachine.');
+        if (status === 429) throw new Error('You have reached the AI usage limit. Please try again later.');
+        if (status === 503) throw new Error('The AI Workmachine needs its Supabase rate-limit setup completed.');
+        if (status === 504) throw new Error('The AI Workmachine took too long to respond. Please try a smaller change.');
+        throw new Error('The AI Workmachine could not reach its service. Please try again.');
+      }
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        throw new Error('The AI Workmachine returned an unreadable response. Please try again.');
+      }
 
-      if (result.action === 'clarify' || result.action === 'no_op') {
-        set({ aiFeedbackMessage: result.message || 'Could not apply AI edit.' });
-        setTimeout(() => set({ aiFeedbackMessage: null }), 5000);
+      if (editorAsyncEpoch !== startEpoch) return;
+      if (get().editorRevision !== startRev) {
+        set({ aiFeedbackMessage: 'Your design changed while the AI was working. Please run the command again.' });
         return;
       }
 
-      saveHistory();
-
-      if (result.action === 'add_tool' && result.toolType) {
-        addTool(result.toolType, undefined, result.shapeType, result.overrides);
+      const result = data as Record<string, unknown>;
+      const action = result.action;
+      const resultMessage = typeof result.message === 'string' ? result.message.slice(0, 400) : '';
+      if (action === 'clarify' || action === 'no_op') {
+        set({ aiFeedbackMessage: resultMessage || (action === 'clarify' ? 'Please clarify which artwork you want to change.' : 'I could not identify a safe edit to apply.') });
         return;
       }
 
-      if (result.action === 'update_workspace' && result.updates?.tshirtColor) {
-        setTshirtColor(result.updates.tshirtColor);
-        return;
-      }
+      const currentState = get();
+      let nextDecals = [...currentState.decals];
+      let nextSelectedIds = [...currentState.selectedIds];
+      let tShirtColorCommit = currentState.tshirtColor;
+      const updatedGens: Record<string, number> = {};
+      const changedIds: string[] = [];
+      let applied = false;
 
-      if (result.action === 'delete_layers' && Array.isArray(result.ids)) {
-        for (const id of result.ids) {
-          removeDecal(id);
+      if (action === 'add_tool' && isValidToolType(result.toolType) && (result.toolType === 'shape' || result.toolType === 'text')) {
+        const type = result.toolType as ToolType;
+        const shapeType = type === 'shape'
+          ? (isValidShapeType(result.shapeType) ? result.shapeType : undefined)
+          : undefined;
+        if (type === 'shape' && !shapeType) {
+          set({ aiFeedbackMessage: 'The requested shape is not supported yet. Try a rectangle, circle, star or badge.' });
+          return;
         }
-        return;
-      }
 
-      if (result.action === 'group_layers' && Array.isArray(result.ids) && result.ids.length > 1) {
-        const newGroupId = crypto.randomUUID();
-        for (const id of result.ids) {
-          updateDecal(id, { groupId: newGroupId });
+        const validOverrides = sanitizeAiOverrides(result.overrides);
+        const defaultConfig = getDefaultConfig(type);
+        const mergedConfig: Partial<DecalData> = {
+          ...defaultConfig,
+          ...validOverrides,
+          ...(shapeType ? { shapeType } : {}),
+        };
+        if (type === 'text' && !validOverrides.text) mergedConfig.text = 'CALIQUI';
+        const src = generateAssetTexture(mergedConfig);
+        const finalId = crypto.randomUUID();
+        const hasExplicitPosition = Array.isArray(validOverrides.position);
+        const label = shapeType
+          ? shapeType.split('-').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ')
+          : 'CALIQUI Text';
+        const newDecal: DecalData = {
+          ...defaultConfig,
+          ...validOverrides,
+          id: finalId,
+          type,
+          shapeType: shapeType || undefined,
+          name: validOverrides.name || label,
+          src,
+          originalSrc: undefined,
+          position: validOverrides.position || [0, 0, 0],
+          rotation: validOverrides.rotation || [0, 0, 0],
+          scale: safeNum(validOverrides.scale, 0.01, 10, safeNum(defaultConfig.scale, 0.01, 10, 0.2)),
+          needsInitialPlacement: !hasExplicitPosition,
+          initialPlacementScale: validOverrides.scale,
+          assetId: undefined,
+        };
+        nextDecals.push(newDecal);
+        updatedGens[finalId] = (currentState.decalAsyncGenerations[finalId] || 0) + 1;
+        changedIds.push(finalId);
+        nextSelectedIds = [finalId];
+        applied = true;
+      } else if (action === 'update' && Array.isArray(result.updates)) {
+        for (const updateReq of result.updates.slice(0, 30)) {
+          if (!updateReq || typeof updateReq !== 'object' || Array.isArray(updateReq)) continue;
+          const req = updateReq as Record<string, unknown>;
+          const id = typeof req.id === 'string' ? req.id : null;
+          if (!id) continue;
+          const targetIdx = nextDecals.findIndex((decal) => decal.id === id);
+          if (targetIdx < 0) continue;
+          const validChanges = sanitizeAiOverrides(req.changes);
+          const targetDecal = nextDecals[targetIdx];
+          // The renderer uses scaleX/scaleY once either axis has been explicitly set.
+          // Translate an AI uniform-scale update into both axes so resized layers visibly respond.
+          const currentX = targetDecal.scaleX ?? targetDecal.scale ?? 0.2;
+          const currentY = targetDecal.scaleY ?? targetDecal.scale ?? 0.2;
+          const hasExplicitAxes = targetDecal.scaleX !== undefined || targetDecal.scaleY !== undefined;
+
+          if (
+            validChanges.scale !== undefined &&
+            hasExplicitAxes &&
+            validChanges.scaleX === undefined &&
+            validChanges.scaleY === undefined
+          ) {
+            const currentMax = Math.max(0.01, currentX, currentY);
+            const factor = validChanges.scale / currentMax;
+            const nextX = safeNum(currentX * factor, 0.01, 10, currentX);
+            const nextY = safeNum(currentY * factor, 0.01, 10, currentY);
+            validChanges.scaleX = nextX;
+            validChanges.scaleY = nextY;
+            validChanges.scale = Math.max(nextX, nextY);
+          } else if (targetDecal.lockAspectRatio === true) {
+            // A single-axis AI resize must respect the layer's aspect-ratio lock.
+            if (validChanges.scaleX !== undefined && validChanges.scaleY === undefined) {
+              const factor = validChanges.scaleX / Math.max(0.01, currentX);
+              validChanges.scaleY = safeNum(currentY * factor, 0.01, 10, currentY);
+              validChanges.scale = Math.max(validChanges.scaleX, validChanges.scaleY);
+            } else if (validChanges.scaleY !== undefined && validChanges.scaleX === undefined) {
+              const factor = validChanges.scaleY / Math.max(0.01, currentY);
+              validChanges.scaleX = safeNum(currentX * factor, 0.01, 10, currentX);
+              validChanges.scale = Math.max(validChanges.scaleX, validChanges.scaleY);
+            }
+          }
+          if (targetDecal.locked) {
+            for (const key of Object.keys(validChanges)) {
+              if (key !== 'locked') delete (validChanges as Record<string, unknown>)[key];
+            }
+          }
+          if (Object.keys(validChanges).length === 0) continue;
+          if (validChanges.locked !== undefined && Boolean(targetDecal.locked) === validChanges.locked && Object.keys(validChanges).length === 1) continue;
+          const updatedDecal = { ...targetDecal, ...validChanges };
+          const requiresTextureRefresh = Object.keys(validChanges).some((key) => AI_TEXTURE_REFRESH_KEYS.has(key));
+
+          if (!requiresTextureRefresh) {
+            // Transform, placement, visibility, lock and naming edits should not
+            // redraw or re-filter a texture that has not visually changed.
+            nextDecals[targetIdx] = updatedDecal;
+          } else if (updatedDecal.type === 'image' || updatedDecal.type === 'drawing') {
+            const { src: newSrc, aspectRatio } = await applyImageFilters(updatedDecal);
+            nextDecals[targetIdx] = { ...updatedDecal, src: newSrc, aspectRatio };
+          } else {
+            const baseSrc = generateAssetTexture(updatedDecal);
+            const { src: finalSrc, aspectRatio } = await applyImageFilters({
+              ...updatedDecal,
+              originalSrc: baseSrc,
+            });
+            nextDecals[targetIdx] = { ...updatedDecal, src: finalSrc, originalSrc: baseSrc, aspectRatio };
+          }
+          updatedGens[id] = (currentState.decalAsyncGenerations[id] || 0) + 1;
+          changedIds.push(id);
+          applied = true;
         }
+        if (changedIds.length > 0) nextSelectedIds = [...new Set(changedIds)];
+      } else if (action === 'update_workspace' && result.updates && typeof result.updates === 'object') {
+        const color = (result.updates as Record<string, unknown>).tshirtColor;
+        if (typeof color === 'string' && /^#[0-9A-Fa-f]{6}$/.test(color) && color.toLowerCase() !== currentState.tshirtColor.toLowerCase()) {
+          tShirtColorCommit = color;
+          applied = true;
+        }
+      } else if (action === 'delete_layers' && Array.isArray(result.ids)) {
+        const idsToDelete = new Set(result.ids.filter((id): id is string =>
+          typeof id === 'string' && currentState.decals.some((decal) => decal.id === id && !decal.locked),
+        ));
+        if (idsToDelete.size > 0) {
+          nextDecals = nextDecals.filter((decal) => !idsToDelete.has(decal.id));
+          idsToDelete.forEach((id) => {
+            updatedGens[id] = (currentState.decalAsyncGenerations[id] || 0) + 1;
+          });
+          nextSelectedIds = currentState.selectedIds.filter((id) => !idsToDelete.has(id));
+          applied = true;
+        }
+      } else if (action === 'group_layers' && Array.isArray(result.ids)) {
+        const idsToGroup = [...new Set(result.ids.filter((id): id is string =>
+          typeof id === 'string' && currentState.decals.some((decal) => decal.id === id && !decal.locked),
+        ))];
+        if (idsToGroup.length >= 2) {
+          const newGroupId = crypto.randomUUID();
+          const groupSet = new Set(idsToGroup);
+          nextDecals = nextDecals.map((decal) => {
+            if (!groupSet.has(decal.id)) return decal;
+            updatedGens[decal.id] = (currentState.decalAsyncGenerations[decal.id] || 0) + 1;
+            return { ...decal, groupId: newGroupId };
+          });
+          nextSelectedIds = idsToGroup;
+          applied = true;
+        }
+      }
+
+      if (!applied) {
+        set({ aiFeedbackMessage: resultMessage || 'I understood the request, but it did not produce a supported change. Try being more specific.' });
         return;
       }
 
-      if (result.action === 'update' && Array.isArray(result.updates)) {
-        await Promise.all(
-          result.updates.map(async (updateReq: { id: string; changes: Partial<DecalData> }) => {
-            const { id, changes } = updateReq;
-            if (!id || !changes) return;
-
-            if (changes.scale !== undefined)
-              changes.scale = Math.min(Math.max(changes.scale, 0.01), 10);
-            if (changes.scaleX !== undefined)
-              changes.scaleX = Math.min(Math.max(changes.scaleX, 0.01), 10);
-            if (changes.scaleY !== undefined)
-              changes.scaleY = Math.min(Math.max(changes.scaleY, 0.01), 10);
-            if (changes.position) {
-              changes.position = [
-                Math.min(Math.max(changes.position[0], -2), 2),
-                Math.min(Math.max(changes.position[1], -2), 2),
-                Math.min(Math.max(changes.position[2], -2), 2),
-              ];
-            }
-            if (changes.opacity !== undefined)
-              changes.opacity = Math.min(Math.max(changes.opacity, 0), 100);
-            if (changes.tintOpacity !== undefined)
-              changes.tintOpacity = Math.min(Math.max(changes.tintOpacity, 0), 100);
-            if (changes.shadowOpacity !== undefined)
-              changes.shadowOpacity = Math.min(Math.max(changes.shadowOpacity, 0), 100);
-            if (changes.shadowBlur !== undefined)
-              changes.shadowBlur = Math.min(Math.max(changes.shadowBlur, 0), 100);
-            if (changes.blur !== undefined) changes.blur = Math.min(Math.max(changes.blur, 0), 50);
-            if (changes.brightness !== undefined)
-              changes.brightness = Math.min(Math.max(changes.brightness, 0), 200);
-            if (changes.contrast !== undefined)
-              changes.contrast = Math.min(Math.max(changes.contrast, 0), 200);
-            if (changes.saturation !== undefined)
-              changes.saturation = Math.min(Math.max(changes.saturation, 0), 200);
-            if (changes.grayscale !== undefined)
-              changes.grayscale = Math.min(Math.max(changes.grayscale, 0), 100);
-            if (changes.sepia !== undefined)
-              changes.sepia = Math.min(Math.max(changes.sepia, 0), 100);
-            if (changes.hueRotate !== undefined)
-              changes.hueRotate = Math.min(Math.max(changes.hueRotate, 0), 360);
-            if (changes.invert !== undefined)
-              changes.invert = Math.min(Math.max(changes.invert, 0), 100);
-            if (changes.arc !== undefined) changes.arc = Math.min(Math.max(changes.arc, -360), 360);
-            if (changes.wave !== undefined) changes.wave = Math.min(Math.max(changes.wave, 0), 100);
-            if (changes.fontSize !== undefined)
-              changes.fontSize = Math.min(Math.max(changes.fontSize, 8), 400);
-
-            const targetDecal = decals.find((d) => d.id === id);
-            if (!targetDecal) return;
-
-            const updatedDecal = { ...targetDecal, ...changes };
-
-            if (updatedDecal.type === 'image' || updatedDecal.type === 'drawing') {
-              const { src: newSrc, aspectRatio } = await applyImageFilters(updatedDecal);
-              updateDecal(id, { ...changes, src: newSrc, aspectRatio });
-            } else {
-              const baseSrc = generateAssetTexture(updatedDecal);
-              const { src: finalSrc, aspectRatio } = await applyImageFilters({
-                ...updatedDecal,
-                originalSrc: baseSrc,
-              });
-              updateDecal(id, { ...changes, src: finalSrc, originalSrc: baseSrc, aspectRatio });
-            }
-          }),
-        );
+      if (get().editorRevision !== startRev || editorAsyncEpoch !== startEpoch) {
+        if (editorAsyncEpoch === startEpoch) set({ aiFeedbackMessage: 'Your design changed while the AI was working. Please run the command again.' });
+        return;
       }
-    } catch (e) {
-      console.error('AI Command failed', e);
-      set({ aiFeedbackMessage: 'AI request failed. Please try again.' });
-      setTimeout(() => set({ aiFeedbackMessage: null }), 5000);
+
+      get().saveHistory();
+      set((state) => ({
+        decals: nextDecals,
+        selectedIds: nextSelectedIds.filter((id) => nextDecals.some((decal) => decal.id === id)),
+        tshirtColor: tShirtColorCommit,
+        editorRevision: state.editorRevision + 1,
+        decalAsyncGenerations: pruneGens({ ...state.decalAsyncGenerations, ...updatedGens }, nextDecals),
+        aiFeedbackMessage: null,
+      }));
+    } catch (error) {
+      console.error('AI Workmachine request failed:', error);
+      if (editorAsyncEpoch === startEpoch) {
+        set({ aiFeedbackMessage: error instanceof Error ? error.message : 'AI Workmachine failed. Please try again.' });
+      }
     } finally {
-      set({ isAiProcessing: false });
+      if (editorAsyncEpoch === startEpoch) {
+        set((state) => {
+          const newCount = Math.max(0, state.aiActiveCount - 1);
+          return { aiActiveCount: newCount, isAiProcessing: newCount > 0 };
+        });
+      }
     }
   },
 
-  setTshirtColor: (color) => set({ tshirtColor: color }),
-  setApparelModel: (model) => set({ apparelModel: model }),
+  setTshirtColor: (color) =>
+    set((state) => ({ tshirtColor: color, editorRevision: state.editorRevision + 1 })),
+  setApparelModel: (model) =>
+    set((state) => ({ apparelModel: model, editorRevision: state.editorRevision + 1 })),
   setCameraView: (view) => set({ cameraView: view }),
 
   addUserAsset: async (blob: Blob, aspectRatio: number) => {
@@ -1304,30 +2442,37 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const id = crypto.randomUUID();
     const src = URL.createObjectURL(blob);
 
-    set((state) => ({
-      userAssets: [{ id, src, aspectRatio }, ...state.userAssets],
-    }));
-
     try {
       await saveAssetToDB(id, blob, aspectRatio);
-    } catch (e) {
-      console.error('Failed to save asset to DB', e);
+      set((state) => ({ userAssets: [{ id, src, aspectRatio }, ...state.userAssets] }));
+      return { id, src, aspectRatio };
+    } catch (error) {
+      URL.revokeObjectURL(src);
+      throw error;
     }
-
-    return src;
   },
 
   removeUserAsset: async (id: string) => {
+    await archiveAssetInDB(id);
+
     set((state) => {
-      const asset = state.userAssets.find((a) => a.id === id);
-      if (asset) URL.revokeObjectURL(asset.src);
       return { userAssets: state.userAssets.filter((a) => a.id !== id) };
     });
 
     try {
-      await deleteAssetFromDB(id);
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (user) {
+        const { error } = await supabase
+          .from('assets')
+          .update({ is_archived: true })
+          .eq('id', id)
+          .eq('user_id', user.id);
+        if (error) console.error('Failed to update cloud asset archive status:', error.message);
+      }
     } catch (e) {
-      console.error('Failed to delete asset from DB', e);
+      console.error('Failed to sync archive status to cloud', e);
     }
   },
 
@@ -1336,96 +2481,584 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     return await get().addUserAsset(blob, aspectRatio);
   },
 
-  saveDesign: async () => {
-    const state = get();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+  saveDesign: () => {
+    const performSave = async () => {
+      while (true) {
+        const transition: Promise<void> | null = activeTransitionPromise;
 
-    if (!user) {
-      throw new Error('Must be logged in to save');
-    }
+        if (transition === null) {
+          break;
+        }
 
-    const processingDecals = JSON.parse(JSON.stringify(state.decals)) as DecalData[];
+        await transition.catch(() => {});
+      }
 
-    await Promise.all(
-      processingDecals.map(async (decal) => {
-        if ((decal.type === 'image' || decal.type === 'drawing') && decal.originalSrc) {
-          if (decal.originalSrc.startsWith('data:') || decal.originalSrc.startsWith('blob:')) {
-            try {
-              const blob = await dataUrlToBlob(decal.originalSrc);
-              const { blob: compressedBlob } = await processAndCompressImage(blob, 90 * 1024);
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-              const publicUrl = await uploadAssetToStorage(compressedBlob, user.id);
-              if (publicUrl) {
-                decal.originalSrc = publicUrl;
-              }
-            } catch (err) {
-              console.error('Failed to compress/upload decal asset during save:', err);
+      if (!user) {
+        throw new Error('Must be logged in to save');
+      }
+
+      while (true) {
+        const transition: Promise<void> | null = activeTransitionPromise;
+
+        if (transition === null) {
+          break;
+        }
+
+        await transition.catch(() => {});
+      }
+      let state = get();
+      let startRev = state.editorRevision;
+      const startEpoch = editorAsyncEpoch;
+
+      let pendingAssetsExist = true;
+      while (pendingAssetsExist) {
+        pendingAssetsExist = false;
+
+        state = get();
+
+        const assetsToWait: Promise<void>[] = [];
+        for (const d of state.decals) {
+          if (d.assetId) {
+            const pState = pendingAssetSaves.get(d.assetId);
+            if (pState && pState.status === 'pending') {
+              assetsToWait.push(pState.promise);
             }
           }
         }
-      }),
-    );
 
-    const lightweightManifest = extractLightweightManifest(processingDecals);
+        if (assetsToWait.length > 0) {
+          await Promise.allSettled(assetsToWait);
+        }
 
-    const designPayload = {
-      user_id: user.id,
-      name: state.designName || 'Untitled Design',
-      canvas_state: lightweightManifest as unknown as Record<string, unknown>[],
-      tshirt_color: state.tshirtColor || '#ffffff',
-      apparel_model: state.apparelModel,
-      thumbnail_url: 'https://via.placeholder.com/512?text=3D+Model',
+        if (editorAsyncEpoch !== startEpoch) {
+          throw new Error('Save aborted: editor epoch changed during save.');
+        }
+
+        if (get().editorRevision !== startRev) {
+          state = get();
+          startRev = state.editorRevision;
+          pendingAssetsExist = true;
+          continue;
+        }
+
+        const assetsToRecover: DecalData[] = [];
+        for (const d of state.decals) {
+          if (d.assetId && failedAssetIds.has(d.assetId)) {
+            assetsToRecover.push(d);
+          }
+        }
+
+        if (assetsToRecover.length > 0) {
+          for (const d of assetsToRecover) {
+            if (!d.assetId) continue;
+            if (failedAssetIds.has(d.assetId) && d.originalSrc && isLocalBinary(d.originalSrc)) {
+              try {
+                const blob = await dataUrlToBlob(d.originalSrc);
+                await saveAssetToDB(d.assetId, blob, d.aspectRatio || 1);
+                await archiveAssetInDB(d.assetId);
+                failedAssetIds.delete(d.assetId);
+              } catch (e) {
+                throw new Error(
+                  `Failed to recover persistence for asset ${d.assetId}: ${e instanceof Error ? e.message : 'Unknown error'}`,
+                );
+              }
+            } else if (failedAssetIds.has(d.assetId)) {
+              throw new Error(`Cannot recover failed asset ${d.assetId}: Local binary is missing.`);
+            }
+          }
+          if (editorAsyncEpoch !== startEpoch) {
+            throw new Error('Save aborted: editor epoch changed during save.');
+          }
+          if (get().editorRevision !== startRev) {
+            state = get();
+            startRev = state.editorRevision;
+            pendingAssetsExist = true;
+          }
+        }
+      }
+
+      const snapshotName = state.designName;
+      const snapshotColor = state.tshirtColor;
+      const snapshotModel = state.apparelModel;
+      const snapshotRemixSourceId = state.remixSourceId;
+      const snapshotActiveId = state.activeDesignId;
+
+      const processingDecals = JSON.parse(JSON.stringify(state.decals)) as DecalData[];
+      const usedAssetIds = new Set<string>();
+      const localAssetsToUpload = new Map<string, Blob>();
+
+      const newDurableIds = new Map<string, string>();
+
+      for (const decal of processingDecals) {
+        if (decal.type === 'image' || decal.type === 'drawing') {
+          if (
+            !decal.assetId &&
+            decal.originalSrc &&
+            (isLocalBinary(decal.originalSrc) || decal.originalSrc.startsWith('http'))
+          ) {
+            decal.assetId = crypto.randomUUID();
+            const blob = await dataUrlToBlob(decal.originalSrc);
+            await saveAssetToDB(decal.assetId, blob, decal.aspectRatio || 1);
+            await archiveAssetInDB(decal.assetId);
+
+            newDurableIds.set(decal.id, decal.assetId);
+          }
+
+          if (decal.assetId) {
+            usedAssetIds.add(decal.assetId);
+
+            if (!decal.originalSrc || isLocalBinary(decal.originalSrc)) {
+              if (!localAssetsToUpload.has(decal.assetId)) {
+                let blob: Blob | null = null;
+
+                if (decal.originalSrc) {
+                  try {
+                    blob = await dataUrlToBlob(decal.originalSrc);
+                  } catch (_e) {
+                    /* Fallback */
+                  }
+                }
+
+                if (!blob) {
+                  const dbAsset = await getAssetByIdFromDB(decal.assetId);
+                  if (dbAsset?.blob) blob = dbAsset.blob;
+                }
+
+                if (!blob) {
+                  const { data: cloudAsset } = await supabase
+                    .from('assets')
+                    .select('storage_path')
+                    .eq('id', decal.assetId)
+                    .eq('user_id', user.id)
+                    .maybeSingle();
+
+                  if (!cloudAsset?.storage_path) {
+                    throw new Error(`Failed to resolve durable binary for asset ${decal.assetId}`);
+                  }
+                } else {
+                  localAssetsToUpload.set(decal.assetId, blob);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      if (editorAsyncEpoch !== startEpoch) {
+        throw new Error('Save aborted: editor epoch changed during save.');
+      }
+      if (get().editorRevision !== startRev) {
+        throw new Error('Save aborted: Canvas was modified during pre-save processing.');
+      }
+
+      const assetUrlMap = new Map<string, string>();
+
+      await Promise.all(
+        Array.from(usedAssetIds).map(async (aId) => {
+          const { data: existingAsset, error: checkError } = await supabase
+            .from('assets')
+            .select('storage_path')
+            .eq('id', aId)
+            .eq('user_id', user.id)
+            .maybeSingle();
+
+          if (checkError)
+            throw new Error(`Failed to verify metadata for asset ${aId}: ${checkError.message}`);
+
+          if (existingAsset?.storage_path) {
+            const publicUrl = supabase.storage
+              .from('user-assets')
+              .getPublicUrl(existingAsset.storage_path).data.publicUrl;
+            assetUrlMap.set(aId, publicUrl);
+          } else if (localAssetsToUpload.has(aId)) {
+            const blob = localAssetsToUpload.get(aId);
+            if (!blob) {
+              throw new Error(`Local asset ${aId} disappeared before upload.`);
+            }
+            const { blob: compressedBlob } = await processAndCompressImage(blob, 90 * 1024);
+            const publicUrl = await uploadAssetToStorage(compressedBlob, user.id);
+
+            if (!publicUrl) throw new Error(`Upload failed for asset ${aId}`);
+
+            const isActiveDockAsset = get().userAssets.some((a) => a.id === aId);
+            const relativePath = publicUrl.split('user-assets/')[1] || publicUrl;
+
+            const { error: insertError } = await supabase.from('assets').insert({
+              id: aId,
+              user_id: user.id,
+              storage_path: relativePath,
+              file_size: compressedBlob.size,
+              mime_type: compressedBlob.type,
+              is_archived: !isActiveDockAsset,
+            });
+
+            if (insertError)
+              throw new Error(`Failed to create metadata for asset ${aId}: ${insertError.message}`);
+            assetUrlMap.set(aId, publicUrl);
+          } else {
+            throw new Error(`Asset ${aId} is missing locally and not found in cloud storage.`);
+          }
+        }),
+      );
+
+      if (editorAsyncEpoch !== startEpoch) {
+        throw new Error('Save aborted: editor epoch changed during save.');
+      }
+      if (get().editorRevision !== startRev) {
+        throw new Error('Save aborted: Canvas was modified during upload phase.');
+      }
+
+      for (const decal of processingDecals) {
+        if (decal.assetId) {
+          const publicUrl = assetUrlMap.get(decal.assetId);
+          if (publicUrl) decal.originalSrc = publicUrl;
+        }
+      }
+
+      const lightweightManifest = extractLightweightManifest(processingDecals);
+      const designPayload = {
+        user_id: user.id,
+        name: snapshotName || 'Untitled Design',
+        canvas_state: lightweightManifest as unknown as Record<string, unknown>[],
+        tshirt_color: snapshotColor || '#ffffff',
+        apparel_model: snapshotModel,
+        thumbnail_url: 'https://via.placeholder.com/512?text=3D+Model',
+        remix_source_id: snapshotRemixSourceId,
+        is_draft: false,
+      };
+
+      let targetDesignId = snapshotActiveId;
+
+      if (editorAsyncEpoch !== startEpoch || get().editorRevision !== startRev) {
+        throw new Error('Save aborted: Canvas was modified before database commit.');
+      }
+
+      if (targetDesignId) {
+        const { error: updateError, data: updateData } = await supabase
+          .from('designs')
+          .update(designPayload)
+          .eq('id', targetDesignId)
+          .eq('user_id', user.id)
+          .select('id')
+          .single();
+
+        if (updateError) throw new Error(`Failed to update design: ${updateError.message}`);
+        if (!updateData) throw new Error('Design update failed or unauthorized.');
+      } else {
+        const { data: insertData, error: insertError } = await supabase
+          .from('designs')
+          .insert(designPayload)
+          .select('id')
+          .single();
+
+        if (insertError) {
+          throw new Error(`Failed to insert design: ${insertError.message}`);
+        }
+
+        targetDesignId = insertData.id;
+      }
+
+      if (!targetDesignId) {
+        throw new Error('Failed to resolve saved design ID.');
+      }
+
+      if (editorAsyncEpoch !== startEpoch || get().editorRevision !== startRev) {
+        throw new Error('Save aborted: Canvas was modified before asset sync.');
+      }
+
+      const { error: rpcError } = await supabase.rpc('sync_design_assets', {
+        target_design_id: targetDesignId,
+        active_asset_ids: Array.from(usedAssetIds),
+      });
+
+      if (rpcError) {
+        throw new Error(
+          `Design saved, but failed to sync asset relationships: ${rpcError.message}`,
+        );
+      }
+
+      if (get().editorRevision === startRev && editorAsyncEpoch === startEpoch) {
+        set((s) => {
+          let hasMutations = false;
+          const syncedDecals = s.decals.map((d) => {
+            const updated = { ...d };
+            if (newDurableIds.has(d.id)) {
+              updated.assetId = newDurableIds.get(d.id);
+              if (d.assetId !== updated.assetId) hasMutations = true;
+            }
+            if (updated.assetId && assetUrlMap.has(updated.assetId)) {
+              const nextUrl = assetUrlMap.get(updated.assetId);
+              if (nextUrl && updated.originalSrc !== nextUrl) {
+                updated.originalSrc = nextUrl;
+                hasMutations = true;
+              }
+            }
+            return updated;
+          });
+
+          if (s.activeDesignId !== targetDesignId) hasMutations = true;
+
+          if (hasMutations) {
+            return {
+              activeDesignId: targetDesignId,
+              decals: syncedDecals,
+              editorRevision: s.editorRevision + 1,
+            };
+          }
+          return { activeDesignId: targetDesignId };
+        });
+      }
+
+      return targetDesignId;
     };
 
-    if (state.activeDesignId) {
-      const { data: updateData, error: updateError } = await supabase
-        .from('designs')
-        .update(designPayload)
-        .eq('id', state.activeDesignId)
-        .select('id');
-
-      if (updateError) throw updateError;
-
-      if (updateData && updateData.length > 0) {
-        return state.activeDesignId;
+    const promise = (async () => {
+      if (activeSavePromise) {
+        await activeSavePromise.catch(() => {});
       }
-    }
+      return await performSave();
+    })();
 
-    const { data: insertData, error: insertError } = await supabase
-      .from('designs')
-      .insert(designPayload)
-      .select('id')
-      .single();
+    activeSavePromise = promise;
 
-    if (insertError) throw insertError;
-    if (!insertData) throw new Error('Insert succeeded but no data returned.');
+    const cleanup = () => {
+      if (activeSavePromise === promise) activeSavePromise = null;
+    };
+    promise.then(cleanup, cleanup);
 
-    set({ activeDesignId: insertData.id });
-    return insertData.id;
+    return promise;
   },
 }));
 
-let saveTimeout: ReturnType<typeof setTimeout>;
-useEditorStore.subscribe((state) => {
-  clearTimeout(saveTimeout);
-  saveTimeout = setTimeout(() => {
-    try {
-      const lightweightManifest = extractLightweightManifest(state.decals);
+// --- GLOBAL OBJECT URL GARBAGE COLLECTION ---
+const extractAllBlobUrls = (state: EditorState) => {
+  const urls = new Set<string>();
+  const add = (u?: string) => {
+    if (isBlobUrl(u)) urls.add(u as string);
+  };
+  state.decals.forEach((d) => {
+    add(d.src);
+    add(d.originalSrc);
+  });
+  state.userAssets.forEach((a) => {
+    add(a.src);
+  });
+  state.past.forEach((arr) => {
+    arr.forEach((d) => {
+      add(d.src);
+      add(d.originalSrc);
+    });
+  });
+  state.future.forEach((arr) => {
+    arr.forEach((d) => {
+      add(d.src);
+      add(d.originalSrc);
+    });
+  });
+  state.clipboard.forEach((d) => {
+    add(d.src);
+    add(d.originalSrc);
+  });
+  return urls;
+};
 
-      localStorage.setItem(
-        'caliqui_workspace',
-        JSON.stringify({
-          decals: lightweightManifest,
-          tshirtColor: state.tshirtColor,
-          apparelModel: state.apparelModel,
-          activeDesignId: state.activeDesignId,
-          designName: state.designName,
-        }),
-      );
+let previousUrls = new Set<string>();
+
+useEditorStore.subscribe((state) => {
+  const newUrls = extractAllBlobUrls(state);
+  previousUrls.forEach((url) => {
+    if (!newUrls.has(url)) URL.revokeObjectURL(url);
+  });
+  previousUrls = newUrls;
+
+  const referencedAssetIds = new Set<string>();
+  state.decals.forEach((d) => {
+    if (d.assetId) referencedAssetIds.add(d.assetId);
+  });
+  state.past.forEach((arr) => {
+    arr.forEach((d) => {
+      if (d.assetId) referencedAssetIds.add(d.assetId);
+    });
+  });
+
+  state.future.forEach((arr) => {
+    arr.forEach((d) => {
+      if (d.assetId) referencedAssetIds.add(d.assetId);
+    });
+  });
+  state.clipboard.forEach((d) => {
+    if (d.assetId) referencedAssetIds.add(d.assetId);
+  });
+
+  failedAssetIds.forEach((id) => {
+    if (!referencedAssetIds.has(id)) failedAssetIds.delete(id);
+  });
+
+  if (isInitializing) return;
+
+  clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(async () => {
+    try {
+      while (activeTransitionPromise) {
+        await activeTransitionPromise.catch(() => {});
+      }
+
+      let resolveMutex: () => void = () => {};
+      const currentMutex = new Promise<void>((res) => {
+        resolveMutex = res;
+      });
+      const previousMutex = activePersistenceMutex;
+      activePersistenceMutex = currentMutex;
+
+      try {
+        if (previousMutex) {
+          await previousMutex.catch(() => {});
+        }
+
+        const autosaveEpoch = editorAsyncEpoch;
+        let activeState = useEditorStore.getState();
+        let autosaveRevision = activeState.editorRevision;
+
+        let pendingAssetsExist = true;
+        while (pendingAssetsExist) {
+          pendingAssetsExist = false;
+          const assetsToWait: Promise<void>[] = [];
+
+          activeState.decals.forEach((d) => {
+            if (d.assetId && pendingAssetSaves.has(d.assetId)) {
+              const pState = pendingAssetSaves.get(d.assetId);
+              if (pState && pState.status === 'pending') {
+                assetsToWait.push(pState.promise);
+              }
+            }
+          });
+
+          if (assetsToWait.length > 0) {
+            await Promise.allSettled(assetsToWait);
+          }
+
+          if (editorAsyncEpoch !== autosaveEpoch) {
+            return;
+          }
+
+          if (useEditorStore.getState().editorRevision !== autosaveRevision) {
+            activeState = useEditorStore.getState();
+            autosaveRevision = activeState.editorRevision;
+            pendingAssetsExist = true;
+          }
+        }
+
+        if (editorAsyncEpoch !== autosaveEpoch) {
+          return;
+        }
+
+        if (useEditorStore.getState().editorRevision !== autosaveRevision) {
+          return;
+        }
+
+        let attempts = 0;
+        const MAX_REPAIR_WRITES = 3;
+
+        while (attempts < MAX_REPAIR_WRITES) {
+          attempts++;
+
+          if (editorAsyncEpoch !== autosaveEpoch) {
+            return;
+          }
+
+          activeState = useEditorStore.getState();
+
+          if (activeState.editorRevision !== autosaveRevision) {
+            autosaveRevision = activeState.editorRevision;
+          }
+
+          // A newer revision may have introduced local assets that are
+          // still being persisted. Wait for them before checkpointing.
+          const repairAssetsToWait: Promise<void>[] = [];
+
+          for (const d of activeState.decals) {
+            if (d.assetId) {
+              const pState = pendingAssetSaves.get(d.assetId);
+
+              if (pState && pState.status === 'pending') {
+                repairAssetsToWait.push(pState.promise);
+              }
+            }
+          }
+
+          if (repairAssetsToWait.length > 0) {
+            await Promise.allSettled(repairAssetsToWait);
+          }
+
+          if (editorAsyncEpoch !== autosaveEpoch) {
+            return;
+          }
+
+          // Waiting for asset persistence may have coincided with another edit.
+          // Re-check the revision before producing the checkpoint.
+          const stateAfterAssetWait = useEditorStore.getState();
+
+          if (stateAfterAssetWait.editorRevision !== autosaveRevision) {
+            activeState = stateAfterAssetWait;
+            autosaveRevision = stateAfterAssetWait.editorRevision;
+            continue;
+          }
+
+          let isCheckpointSafe = true;
+
+          for (const d of activeState.decals) {
+            if (d.assetId && failedAssetIds.has(d.assetId)) {
+              isCheckpointSafe = false;
+              break;
+            }
+          }
+
+          if (!isCheckpointSafe) {
+            return;
+          }
+
+          const lightweightManifest = extractLightweightManifest(activeState.decals);
+
+          await saveWorkspaceToDB(
+            JSON.stringify({
+              decals: lightweightManifest,
+              tshirtColor: activeState.tshirtColor,
+              apparelModel: activeState.apparelModel,
+              activeDesignId: activeState.activeDesignId,
+              designName: activeState.designName,
+              remixSourceId: activeState.remixSourceId,
+            }),
+          );
+
+          // Critical post-write ownership check.
+          if (editorAsyncEpoch !== autosaveEpoch) {
+            return;
+          }
+
+          const latestState = useEditorStore.getState();
+
+          if (latestState.editorRevision === autosaveRevision) {
+            // The snapshot we just wrote still represents the live editor.
+            break;
+          }
+
+          // A normal edit happened while the DB write was in flight.
+          // Repair immediately while this autosave still owns the persistence mutex.
+          activeState = latestState;
+          autosaveRevision = latestState.editorRevision;
+        }
+      } finally {
+        resolveMutex();
+        if (activePersistenceMutex === currentMutex) {
+          activePersistenceMutex = null;
+        }
+      }
     } catch (e) {
-      console.warn('Workspace save failed (storage limits reached)', e);
+      console.warn('Workspace save failed (IndexedDB error)', e);
     }
   }, 1000);
 });

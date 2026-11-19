@@ -1,6 +1,17 @@
 // Helper to parse Hex to RGB
+const safeNumber = (value: unknown, fallback = 0): number =>
+  typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+
+const safePositive = (value: unknown, fallback = 1): number => {
+  const number = safeNumber(value, fallback);
+  return number > 0 ? number : fallback;
+};
+
 const hexToRgb = (hex: string) => {
+  if (typeof hex !== 'string') return { r: 0, g: 0, b: 0, a: 255 };
   let c = hex.replace('#', '');
+  if (!/^(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(c))
+    return { r: 0, g: 0, b: 0, a: 255 };
   if (c.length === 3)
     c = c
       .split('')
@@ -47,6 +58,7 @@ export const applyBucketFill = (
 ) => {
   const width = ctx.canvas.width;
   const height = ctx.canvas.height;
+  if (width <= 0 || height <= 0 || !Number.isFinite(startX) || !Number.isFinite(startY)) return;
 
   const x = Math.floor(Math.max(0, Math.min(startX, width - 1)));
   const y = Math.floor(Math.max(0, Math.min(startY, height - 1)));
@@ -67,6 +79,8 @@ export const applyBucketFill = (
   }
 
   const stack = [x, y];
+  const visited = new Uint8Array(width * height);
+  visited[y * width + x] = 1;
 
   while (stack.length > 0) {
     const curY = stack.pop();
@@ -82,10 +96,22 @@ export const applyBucketFill = (
       data[pos + 2] = fill.b;
       data[pos + 3] = fill.a;
 
-      if (curX > 0) stack.push(curX - 1, curY);
-      if (curX < width - 1) stack.push(curX + 1, curY);
-      if (curY > 0) stack.push(curX, curY - 1);
-      if (curY < height - 1) stack.push(curX, curY + 1);
+      if (curX > 0 && !visited[curY * width + curX - 1]) {
+        visited[curY * width + curX - 1] = 1;
+        stack.push(curX - 1, curY);
+      }
+      if (curX < width - 1 && !visited[curY * width + curX + 1]) {
+        visited[curY * width + curX + 1] = 1;
+        stack.push(curX + 1, curY);
+      }
+      if (curY > 0 && !visited[(curY - 1) * width + curX]) {
+        visited[(curY - 1) * width + curX] = 1;
+        stack.push(curX, curY - 1);
+      }
+      if (curY < height - 1 && !visited[(curY + 1) * width + curX]) {
+        visited[(curY + 1) * width + curX] = 1;
+        stack.push(curX, curY + 1);
+      }
     }
   }
 
@@ -105,11 +131,14 @@ const processBrushChunk = (
     distance: number,
   ) => [number, number, number],
 ) => {
-  const radius = Math.floor(size / 2);
-  const startX = Math.max(0, Math.floor(centerX - radius));
-  const startY = Math.max(0, Math.floor(centerY - radius));
-  const chunkWidth = Math.min(ctx.canvas.width - startX, radius * 2);
-  const chunkHeight = Math.min(ctx.canvas.height - startY, radius * 2);
+  if (!Number.isFinite(centerX) || !Number.isFinite(centerY)) return;
+  const validSize = safePositive(size, 1);
+  const radius = Math.max(0.5, validSize / 2);
+  const floorRadius = Math.floor(radius);
+  const startX = Math.max(0, Math.floor(centerX - floorRadius));
+  const startY = Math.max(0, Math.floor(centerY - floorRadius));
+  const chunkWidth = Math.min(ctx.canvas.width - startX, floorRadius * 2 + 1);
+  const chunkHeight = Math.min(ctx.canvas.height - startY, floorRadius * 2 + 1);
 
   if (chunkWidth <= 0 || chunkHeight <= 0) return;
 
@@ -154,11 +183,12 @@ export const applyBurn = (
   size: number,
   intensity: number = 0.15,
 ) => {
+  const validIntensity = Math.max(0, Math.min(1, safeNumber(intensity, 0.15)));
   processBrushChunk(ctx, x, y, size, (r, g, b) => {
     return [
-      Math.max(0, r - r * intensity),
-      Math.max(0, g - g * intensity),
-      Math.max(0, b - b * intensity),
+      Math.max(0, r - r * validIntensity),
+      Math.max(0, g - g * validIntensity),
+      Math.max(0, b - b * validIntensity),
     ];
   });
 };
@@ -170,12 +200,13 @@ export const applySaturate = (
   size: number,
   intensity: number = 0.2,
 ) => {
+  const validIntensity = Math.max(0, Math.min(1, safeNumber(intensity, 0.2)));
   processBrushChunk(ctx, x, y, size, (r, g, b) => {
     const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
     return [
-      Math.min(255, r + (r - luminance) * intensity),
-      Math.min(255, g + (g - luminance) * intensity),
-      Math.min(255, b + (b - luminance) * intensity),
+      Math.min(255, r + (r - luminance) * validIntensity),
+      Math.min(255, g + (g - luminance) * validIntensity),
+      Math.min(255, b + (b - luminance) * validIntensity),
     ];
   });
 };
@@ -187,11 +218,16 @@ export const applyBlur = (
   size: number,
   intensity: number = 2,
 ) => {
-  const radius = Math.floor(size / 2);
-  const startX = Math.max(0, Math.floor(centerX - radius));
-  const startY = Math.max(0, Math.floor(centerY - radius));
-  const chunkWidth = Math.min(ctx.canvas.width - startX, radius * 2);
-  const chunkHeight = Math.min(ctx.canvas.height - startY, radius * 2);
+  if (!Number.isFinite(centerX) || !Number.isFinite(centerY)) return;
+  const validSize = safePositive(size, 1);
+  const validIntensity = Math.max(0, safeNumber(intensity, 2));
+  if (validIntensity === 0) return;
+  const radius = Math.max(0.5, validSize / 2);
+  const floorRadius = Math.floor(radius);
+  const startX = Math.max(0, Math.floor(centerX - floorRadius));
+  const startY = Math.max(0, Math.floor(centerY - floorRadius));
+  const chunkWidth = Math.min(ctx.canvas.width - startX, floorRadius * 2 + 1);
+  const chunkHeight = Math.min(ctx.canvas.height - startY, floorRadius * 2 + 1);
 
   if (chunkWidth <= 0 || chunkHeight <= 0) return;
 
@@ -199,7 +235,7 @@ export const applyBlur = (
   const originalData = new Uint8ClampedArray(imageData.data);
   const data = imageData.data;
 
-  const blurStrength = Math.max(1, Math.floor(intensity / 10));
+  const blurStrength = Math.max(1, Math.floor(validIntensity / 10));
 
   for (let y = 0; y < chunkHeight; y++) {
     for (let x = 0; x < chunkWidth; x++) {
@@ -264,10 +300,10 @@ export const applyCrop = (
   const width = ctx.canvas.width;
   const height = ctx.canvas.height;
 
-  let rx = rect.x;
-  let ry = rect.y;
-  let rw = rect.width;
-  let rh = rect.height;
+  let rx = safeNumber(rect?.x, 0);
+  let ry = safeNumber(rect?.y, 0);
+  let rw = safeNumber(rect?.width, width);
+  let rh = safeNumber(rect?.height, height);
 
   if (rw < 0) {
     rx += rw;
@@ -374,16 +410,16 @@ export const applyErase = (
   size: number,
   intensity: number,
 ) => {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  const validSize = safePositive(size, 1);
+  const validIntensity = Math.max(0, Math.min(1, safeNumber(intensity, 1)));
+  if (validIntensity === 0) return;
+
   ctx.save();
-  // This is the magic canvas property that turns brush strokes into transparency
   ctx.globalCompositeOperation = 'destination-out';
-
   ctx.beginPath();
-  ctx.arc(x, y, size / 2, 0, Math.PI * 2);
-
-  // Intensity dictates how "hard" the eraser is. 1 = full erase, lower = soft fade.
-  ctx.fillStyle = `rgba(0, 0, 0, ${intensity})`;
+  ctx.arc(x, y, validSize / 2, 0, Math.PI * 2);
+  ctx.fillStyle = `rgba(0, 0, 0, ${validIntensity})`;
   ctx.fill();
-
   ctx.restore();
 };

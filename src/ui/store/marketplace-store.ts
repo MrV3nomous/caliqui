@@ -12,7 +12,7 @@ export interface MarketplaceItem {
   available_sizes: string[];
   canvas_state?: Record<string, unknown>[];
   tshirt_color?: string;
-  apparel_model?: string;
+  apparel_model?: 'tshirtman' | 'tshirtwoman' | 'tshirtoversized';
   discount_percentage?: number;
   is_new?: boolean;
   is_bestseller?: boolean;
@@ -42,6 +42,8 @@ interface MarketplaceState {
   // Properly typed signature for deep-link resolution
   fetchItemById: (id: string) => Promise<MarketplaceItem | null>;
 }
+
+let marketplaceRequestId = 0;
 
 export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
   items: [],
@@ -87,11 +89,13 @@ export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
 
   // 3. The "Surprise Me" Shuffle Mode
   fetchRandomItems: async () => {
+    const requestId = ++marketplaceRequestId;
     // Clear items, show loader, lock infinite scrolling
     set({ isLoading: true, isShuffleMode: true, hasMore: false, currentPage: 1 });
 
     const { data, error } = await supabase.rpc('get_random_items', { limit_count: 12 });
 
+    if (requestId !== marketplaceRequestId) return;
     if (!error && data) {
       set({ items: data as MarketplaceItem[], isLoading: false });
     } else {
@@ -109,6 +113,7 @@ export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
 
   // 5. Paginated item retrieval with SWR Caching and Server-Side Filters
   fetchItems: async (category: string, query: string, page: number) => {
+    const requestId = ++marketplaceRequestId;
     const { sortBy, isShuffleMode } = get();
 
     const isLoadMore = page > 1;
@@ -179,6 +184,8 @@ export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
     dbQuery = dbQuery.range(from, to);
 
     const { data, error } = await dbQuery;
+
+    if (requestId !== marketplaceRequestId) return;
 
     if (!error && data) {
       set((state) => {

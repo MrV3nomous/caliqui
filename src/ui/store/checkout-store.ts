@@ -330,21 +330,21 @@ export const useCheckoutStore = create<CheckoutState>((set, get) => ({
   addAddress: async (newAddr) => {
     const {
       data: { user },
+      error: authError,
     } = await supabase.auth.getUser();
-    if (!user) return null;
+    if (authError) throw authError;
+    if (!user) throw new Error('Authentication required to save an address.');
 
     const created: ShippingAddress = { id: crypto.randomUUID(), ...newAddr };
     const updatedAddresses = [...get().savedAddresses, created];
-
-    set({ savedAddresses: updatedAddresses });
 
     const { error } = await supabase
       .from('profiles')
       .update({ saved_addresses: updatedAddresses })
       .eq('id', user.id);
 
-    if (error) console.error('Failed to save address to database:', error);
-
+    if (error) throw error;
+    set({ savedAddresses: updatedAddresses });
     return created;
   },
 

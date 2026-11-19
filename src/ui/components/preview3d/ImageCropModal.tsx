@@ -9,6 +9,8 @@ export function ImageCropModal() {
   const decal = decals.find((d) => d.id === croppingDecalId);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const captureTargetRef = useRef<HTMLElement | null>(null);
+  const pointerIdRef = useRef<number | null>(null);
 
   const [crop, setCrop] = useState({
     x: decal?.cropX ?? 0,
@@ -21,6 +23,7 @@ export function ImageCropModal() {
     handle: string | null;
     startX: number;
     startY: number;
+    pointerId: number;
   } | null>(null);
 
   useEffect(() => {
@@ -34,16 +37,30 @@ export function ImageCropModal() {
     }
   }, [decal]);
 
+  useEffect(() => () => {
+    const pointerId = pointerIdRef.current;
+    const target = captureTargetRef.current;
+    pointerIdRef.current = null;
+    captureTargetRef.current = null;
+    if (pointerId !== null && target) {
+      try { if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId); } catch {}
+    }
+  }, []);
+
   if (!croppingDecalId || !decal?.originalSrc) return null;
 
   const handlePointerDown = (e: React.PointerEvent, handle: string) => {
+    if (e.button !== 0 || isDragging) return;
     e.preventDefault();
     e.stopPropagation();
-    setIsDragging({ handle, startX: e.clientX, startY: e.clientY });
+    captureTargetRef.current = e.currentTarget as HTMLElement;
+    pointerIdRef.current = e.pointerId;
+    try { captureTargetRef.current.setPointerCapture(e.pointerId); } catch {}
+    setIsDragging({ handle, startX: e.clientX, startY: e.clientY, pointerId: e.pointerId });
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
-    if (!isDragging || !containerRef.current) return;
+    if (!isDragging || e.pointerId !== isDragging.pointerId || pointerIdRef.current !== e.pointerId || !containerRef.current) return;
 
     const bounds = containerRef.current.getBoundingClientRect();
     const dx = ((e.clientX - isDragging.startX) / bounds.width) * 100;
@@ -79,9 +96,17 @@ export function ImageCropModal() {
     setIsDragging({ ...isDragging, startX: e.clientX, startY: e.clientY });
   };
 
-  const handlePointerUp = () => {
+  const handlePointerUp = (e: React.PointerEvent) => {
+    if (!isDragging || e.pointerId !== isDragging.pointerId || pointerIdRef.current !== e.pointerId) return;
     setIsDragging(null);
+    pointerIdRef.current = null;
+    const target = captureTargetRef.current;
+    captureTargetRef.current = null;
+    try {
+      if (target?.hasPointerCapture(e.pointerId)) target.releasePointerCapture(e.pointerId);
+    } catch {}
   };
+
 
   const applyCrop = async () => {
     saveHistory();
@@ -99,7 +124,8 @@ export function ImageCropModal() {
       className="fixed inset-0 z-[9999] flex items-center justify-end pr-6 md:pr-10 touch-none select-none"
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
-      onPointerLeave={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      onLostPointerCapture={handlePointerUp}
     >
       {/* Subtle blurred overlay that allows the 3D model to peek through */}
       <button

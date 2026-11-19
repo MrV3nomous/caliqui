@@ -1,8 +1,9 @@
 import { Html } from '@react-three/drei';
 import { type ThreeEvent, useFrame, useThree } from '@react-three/fiber';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { useEditorStore } from '@/ui/store/editor-store';
+import { claimEditorGesture, ownsEditorGesture, releaseEditorGesture } from './gestureCoordinator';
 
 export function MarqueeEngine() {
   const { camera, scene, size } = useThree();
@@ -16,6 +17,8 @@ export function MarqueeEngine() {
   } = useEditorStore();
 
   const planeRef = useRef<THREE.Mesh>(null);
+  const pointerIdRef = useRef<number | null>(null);
+  const captureTargetRef = useRef<{ setPointerCapture?: (id: number) => void; releasePointerCapture?: (id: number) => void } | null>(null);
 
   // 1. Lock the invisible drag-catcher mesh directly to the camera lens!
   // This guarantees it will never slice through the T-shirt when rotated.
@@ -29,6 +32,26 @@ export function MarqueeEngine() {
 
   const [screenStart, setScreenStart] = useState<{ x: number; y: number } | null>(null);
   const [screenEnd, setScreenEnd] = useState<{ x: number; y: number } | null>(null);
+
+  const finishMarquee = (pointerId: number) => {
+    if (pointerIdRef.current !== pointerId || !ownsEditorGesture('marquee', pointerId)) return false;
+    const released = releaseEditorGesture('marquee', pointerId);
+    pointerIdRef.current = null;
+    try { captureTargetRef.current?.releasePointerCapture?.(pointerId); } catch {}
+    captureTargetRef.current = null;
+    useEditorStore.getState().setIsDragging(false);
+    return released;
+  };
+
+  useEffect(() => () => {
+    const pointerId = pointerIdRef.current;
+    if (pointerId === null) return;
+    const released = releaseEditorGesture('marquee', pointerId);
+    try { captureTargetRef.current?.releasePointerCapture?.(pointerId); } catch {}
+    if (released) useEditorStore.getState().setIsDragging(false);
+    pointerIdRef.current = null;
+    captureTargetRef.current = null;
+  }, []);
 
   if (globalToolMode !== 'select') return null;
 
@@ -51,7 +74,11 @@ export function MarqueeEngine() {
         ref={planeRef}
         visible={true}
         onPointerDown={(e: ThreeEvent<PointerEvent>) => {
+          if (e.button !== 0 || !claimEditorGesture('marquee', e.pointerId)) return;
           e.stopPropagation();
+          pointerIdRef.current = e.pointerId;
+          captureTargetRef.current = e.target as unknown as { setPointerCapture?: (id: number) => void; releasePointerCapture?: (id: number) => void };
+          try { captureTargetRef.current.setPointerCapture?.(e.pointerId); } catch {}
           const pos = getCanvasPos(e.pointer);
 
           setScreenStart(pos);
@@ -64,29 +91,41 @@ export function MarqueeEngine() {
           setShowMarqueeBox(true);
           setIsDragging(true);
 
-          try {
-            // @ts-expect-error R3F injects setPointerCapture on the target proxy
-            e.target.setPointerCapture?.(e.pointerId);
-          } catch {}
         }}
         onPointerMove={(e: ThreeEvent<PointerEvent>) => {
           const state = useEditorStore.getState();
-          if (state.marqueeStart) {
+          if (pointerIdRef.current === e.pointerId && ownsEditorGesture('marquee', e.pointerId) && state.marqueeStart) {
             e.stopPropagation();
             setScreenEnd(getCanvasPos(e.pointer));
           }
         }}
-        onPointerUp={(e: ThreeEvent<PointerEvent>) => {
+        onLostPointerCapture={(e: ThreeEvent<PointerEvent>) => {
+          if (!finishMarquee(e.pointerId)) return;
+          const state = useEditorStore.getState();
+          state.setMarqueeStart(null);
+          state.setMarqueeEnd(null);
+          state.setShowMarqueeBox(false);
+          setScreenStart(null);
+          setScreenEnd(null);
+        }}
+        onPointerCancel={(e: ThreeEvent<PointerEvent>) => {
+          if (!finishMarquee(e.pointerId)) return;
           e.stopPropagation();
           const state = useEditorStore.getState();
-          if (!state.marqueeStart) return;
+          state.setMarqueeStart(null);
+          state.setMarqueeEnd(null);
+          state.setShowMarqueeBox(false);
+          setScreenStart(null);
+          setScreenEnd(null);
 
-          setIsDragging(false);
+        }}
+        onPointerUp={(e: ThreeEvent<PointerEvent>) => {
+          if (pointerIdRef.current !== e.pointerId || !ownsEditorGesture('marquee', e.pointerId)) return;
+          e.stopPropagation();
+          const state = useEditorStore.getState();
+          if (!state.marqueeStart) { finishMarquee(e.pointerId); return; }
 
-          try {
-            // @ts-expect-error R3F injects releasePointerCapture on the target proxy
-            e.target.releasePointerCapture?.(e.pointerId);
-          } catch {}
+          finishMarquee(e.pointerId);
 
           if (screenStart) {
             const pos = getCanvasPos(e.pointer);
@@ -223,9 +262,9 @@ export function MarqueeEngine() {
                 top,
                 width,
                 height,
-                backgroundColor: 'rgba(59, 130, 246, 0.25)',
-                border: '1px solid rgba(59, 130, 246, 0.8)',
-                boxShadow: '0 0 0 1px rgba(255, 255, 255, 0.2)',
+                backgroundColor: 'color-mix(in srgb, var(--studio-ui-accent, #788995) 12%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--studio-ui-accent, #788995) 62%, transparent)',
+                boxShadow: 'none',
                 pointerEvents: 'none',
               }}
             />

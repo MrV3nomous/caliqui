@@ -27,6 +27,7 @@ import { Mini3DViewer } from '@/ui/components/Mini3DViewer';
 import { Mini3DViewerStatic } from '@/ui/components/Mini3DViewerStatic';
 import { useAuthStore } from '@/ui/store/auth-store';
 import { useCheckoutStore } from '@/ui/store/checkout-store';
+import { useEditorStore } from '@/ui/store/editor-store';
 import type { MarketplaceItem } from '@/ui/store/marketplace-store';
 import { useMarketplaceStore } from '@/ui/store/marketplace-store';
 
@@ -454,7 +455,6 @@ export function Marketplace() {
     XL: 0,
     XXL: 0,
   });
-  const [focusedSize, setFocusedSize] = useState<string>('M');
   const [isAdding, setIsAdding] = useState(false);
   const [_cartAnim, setCartAnim] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
@@ -462,11 +462,9 @@ export function Marketplace() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const skeletonKeys = useMemo(() => Array.from({ length: 12 }).map(() => crypto.randomUUID()), []);
   const observerTarget = useRef<HTMLDivElement>(null);
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestedItemIdRef = useRef<string | null>(null);
   const globalFitRef = useRef(globalFit);
 
-  const isLongPress = useRef(false);
   const isNavigating = useRef(false);
   const drawerMountTime = useRef(0);
 
@@ -484,19 +482,6 @@ export function Marketplace() {
     !isShuffleMode && activeCategory === 'All' && !debouncedSearch && spotlightItems.length > 0;
 
   const hasVisibleProducts = archiveItems.length > 0 || shouldShowSpotlight;
-
-  const clearLongPressTimer = useCallback(() => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      clearLongPressTimer();
-    };
-  }, [clearLongPressTimer]);
 
   useEffect(() => {
     globalFitRef.current = globalFit;
@@ -627,7 +612,6 @@ export function Marketplace() {
       if (isNewProduct) {
         setSelectedProduct(cachedProduct);
         setSelectedSizes({ XS: 0, S: 0, M: 0, L: 0, XL: 0, XXL: 0 });
-        setFocusedSize('M');
         setDrawerFit(
           cachedProduct.canvas_state
             ? globalFitRef.current
@@ -661,8 +645,7 @@ export function Marketplace() {
         if (isNewProduct) {
           setSelectedProduct(fetchedProduct);
           setSelectedSizes({ XS: 0, S: 0, M: 0, L: 0, XL: 0, XXL: 0 });
-          setFocusedSize('M');
-          setDrawerFit(
+            setDrawerFit(
             fetchedProduct.canvas_state
               ? globalFitRef.current
               : (fetchedProduct.apparel_model as ApparelModel) || 'tshirtman',
@@ -717,39 +700,6 @@ export function Marketplace() {
     }));
   };
 
-  const handleSizeLeftClick = (e: React.MouseEvent, size: string) => {
-    e.preventDefault();
-    if (isLongPress.current) {
-      isLongPress.current = false;
-      return;
-    }
-    setFocusedSize(size);
-    updateLocalSize(size, 1);
-  };
-
-  const handleSizeRightClick = (e: React.MouseEvent, size: string) => {
-    e.preventDefault();
-    setFocusedSize(size);
-    updateLocalSize(size, -1);
-  };
-
-  const handleTouchStart = (size: string) => {
-    isLongPress.current = false;
-    longPressTimer.current = setTimeout(() => {
-      isLongPress.current = true;
-      setFocusedSize(size);
-      updateLocalSize(size, -1);
-    }, 500);
-  };
-
-  const handleTouchEnd = () => {
-    clearLongPressTimer();
-  };
-
-  const handleTouchCancel = () => {
-    clearLongPressTimer();
-  };
-
   const handleOpenProduct = useCallback(
     (product: MarketplaceItem) => {
       incrementPopularity(product.id);
@@ -759,7 +709,6 @@ export function Marketplace() {
       setSearchParams({ item: product.id });
       setSelectedProduct(product);
       setSelectedSizes({ XS: 0, S: 0, M: 0, L: 0, XL: 0, XXL: 0 });
-      setFocusedSize('M');
       requestedItemIdRef.current = product.id;
 
       setDrawerFit(
@@ -1043,62 +992,41 @@ export function Marketplace() {
                       Size
                     </span>
                   </div>
-                  <div className="flex flex-wrap gap-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {['XS', 'S', 'M', 'L', 'XL', 'XXL'].map((size) => {
                       const qty = selectedSizes[size] || 0;
-                      const isFocused = focusedSize === size;
                       return (
-                        <button
-                          key={size}
-                          type="button"
-                          aria-label={`${size} size, ${qty} selected`}
-                          onClick={(e) => handleSizeLeftClick(e, size)}
-                          onContextMenu={(e) => handleSizeRightClick(e, size)}
-                          onTouchStart={() => handleTouchStart(size)}
-                          onTouchCancel={handleTouchCancel}
-                          onTouchEnd={handleTouchEnd}
-                          className={`relative h-10 min-w-10 px-2 flex items-center justify-center text-[11px] transition-all outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm cursor-pointer border-b ${
-                            isFocused
-                              ? 'border-stone-900 text-stone-900 font-medium'
-                              : 'border-transparent text-stone-400 hover:text-stone-900'
-                          }`}
-                        >
-                          {size}
-                          {qty > 0 && (
-                            <span className="absolute -top-1 -right-2 text-[9px] font-bold text-stone-900">
-                              {qty}
-                            </span>
-                          )}
-                        </button>
+                        <div key={size} className="min-h-12 flex items-center justify-between gap-2 rounded-xl border border-stone-200 px-3 py-2">
+                          <span className="text-xs font-semibold text-stone-800">{size}</span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              aria-label={`Remove one size ${size}`}
+                              onClick={() => updateLocalSize(size, -1)}
+                              disabled={qty === 0}
+                              className="w-8 h-8 rounded-lg border border-stone-200 flex items-center justify-center text-stone-700 hover:bg-stone-50 disabled:opacity-30 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-stone-900/40"
+                            >
+                              <Minus size={13} />
+                            </button>
+                            <output aria-live="polite" className="w-4 text-center text-xs font-semibold tabular-nums">{qty}</output>
+                            <button
+                              type="button"
+                              aria-label={`Add one size ${size}`}
+                              onClick={() => updateLocalSize(size, 1)}
+                              className="w-8 h-8 rounded-lg bg-stone-900 text-white flex items-center justify-center hover:bg-stone-700 focus-visible:ring-2 focus-visible:ring-stone-900/40 focus-visible:ring-offset-2"
+                            >
+                              <Plus size={13} />
+                            </button>
+                          </div>
+                        </div>
                       );
                     })}
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between mb-12">
-                  <span className="text-[9px] font-medium uppercase tracking-[0.2em] text-stone-400">
-                    Quantity <span className="text-stone-900 ml-1">({focusedSize})</span>
-                  </span>
-                  <div className="flex items-center gap-6 text-stone-900">
-                    <button
-                      type="button"
-                      onClick={() => updateLocalSize(focusedSize, -1)}
-                      disabled={selectedSizes[focusedSize] === 0}
-                      className="hover:opacity-50 disabled:opacity-20 outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm transition-opacity cursor-pointer"
-                    >
-                      <Minus size={14} strokeWidth={1} />
-                    </button>
-                    <span className="text-sm font-light w-4 text-center">
-                      {selectedSizes[focusedSize] || 0}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => updateLocalSize(focusedSize, 1)}
-                      className="hover:opacity-50 outline-none focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm transition-opacity cursor-pointer"
-                    >
-                      <Plus size={14} strokeWidth={1} />
-                    </button>
-                  </div>
+                <div className="flex items-center justify-between mb-12 text-xs text-stone-500">
+                  <span>Selected quantity</span>
+                  <output aria-live="polite" className="font-semibold text-stone-900 tabular-nums">{totalQty}</output>
                 </div>
 
                 <button
@@ -1113,9 +1041,23 @@ export function Marketplace() {
                 <div className="w-full flex justify-center mt-6">
                   <button
                     type="button"
-                    onClick={() => {
-                      handleCloseProduct();
-                      navigate('/editor');
+                    onClick={async () => {
+                      if (!selectedProduct) return;
+
+                      try {
+                        await useEditorStore.getState().loadRemix({
+                          id: selectedProduct.id,
+                          name: selectedProduct.name,
+                          canvasState: selectedProduct.canvas_state ?? [],
+                          tshirtColor: selectedProduct.tshirt_color ?? '#ffffff',
+                          apparelModel: selectedProduct.apparel_model ?? 'tshirtman',
+                        });
+
+                        handleCloseProduct();
+                        navigate('/editor');
+                      } catch (error) {
+                        console.error('Failed to open product in Studio:', error);
+                      }
                     }}
                     className="text-[9px] text-stone-400 hover:text-stone-900 font-medium uppercase tracking-[0.2em] transition-colors outline-none focus-visible:text-stone-900 focus-visible:ring-1 focus-visible:ring-stone-900/30 rounded-sm pb-1 border-b border-transparent hover:border-stone-900"
                   >

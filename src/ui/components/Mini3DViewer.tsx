@@ -8,7 +8,7 @@ import {
   useGLTF,
   useTexture,
 } from '@react-three/drei';
-import { Canvas, createPortal, useThree } from '@react-three/fiber';
+import { Canvas } from '@react-three/fiber';
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import tshirtManUrl from '@/assets/models/tshirtman.glb?url';
@@ -29,16 +29,43 @@ const MODELS: Record<string, string> = {
 
 const MODEL_SCALE = 0.03;
 
+const getThreeBlending = (mode?: string) => {
+  switch (mode) {
+    case 'multiply':
+    case 'darken':
+    case 'color-burn':
+      return THREE.MultiplyBlending;
+    case 'screen':
+    case 'lighten':
+    case 'color-dodge':
+      return THREE.AdditiveBlending;
+    case 'difference':
+    case 'exclusion':
+      return THREE.SubtractiveBlending;
+    default:
+      return THREE.NormalBlending;
+  }
+};
+
 class DecalErrorBoundary extends React.Component<
-  { children: React.ReactNode },
-  { hasError: boolean }
+  { children: React.ReactNode; resetKey: string },
+  { hasError: boolean; lastKey: string }
 > {
-  constructor(props: { children: React.ReactNode }) {
+  constructor(props: { children: React.ReactNode; resetKey: string }) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, lastKey: props.resetKey };
   }
   static getDerivedStateFromError() {
     return { hasError: true };
+  }
+  static getDerivedStateFromProps(
+    props: { resetKey: string },
+    state: { hasError: boolean; lastKey: string },
+  ) {
+    if (state.hasError && props.resetKey !== state.lastKey) {
+      return { hasError: false, lastKey: props.resetKey };
+    }
+    return { lastKey: props.resetKey };
   }
   render() {
     if (this.state.hasError) return null;
@@ -47,16 +74,43 @@ class DecalErrorBoundary extends React.Component<
 }
 
 function WrapMaterial({ meshes, decal }: { meshes: THREE.Mesh[]; decal: DecalData }) {
-  const texture = useTexture(decal.src || '');
+  const cachedTexture = useTexture(decal.src || '');
+  const texture = useMemo(() => cachedTexture.clone(), [cachedTexture]);
+
+  useEffect(() => () => texture.dispose(), [texture]);
+
   useEffect(() => {
     if (!texture) return;
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
 
-    const sx = decal.scaleX || decal.scale || 1;
-    const sy = decal.scaleY || decal.scale || 1;
-    texture.repeat.set(1 / sx, 1 / sy);
+    const aspect =
+      typeof decal.aspectRatio === 'number' && Number.isFinite(decal.aspectRatio)
+        ? Math.max(0.0001, decal.aspectRatio)
+        : 1;
+
+    let sx = decal.scaleX ?? decal.scale;
+    let sy = decal.scaleY ?? decal.scale;
+
+    if (decal.scaleX === undefined && decal.scaleY === undefined) {
+      if (aspect > 1) {
+        sx = (decal.scale ?? 0.35) * aspect;
+        sy = decal.scale ?? 0.35;
+      } else if (aspect < 1) {
+        sx = decal.scale ?? 0.35;
+        sy = (decal.scale ?? 0.35) / aspect;
+      } else {
+        sx = decal.scale ?? 0.35;
+        sy = decal.scale ?? 0.35;
+      }
+    }
+
+    const finalSx = typeof sx === 'number' && Number.isFinite(sx) && sx > 0 ? sx : 0.35;
+    const finalSy = typeof sy === 'number' && Number.isFinite(sy) && sy > 0 ? sy : 0.35;
+
+    texture.repeat.set((decal.flipX ? -1 : 1) / finalSx, (decal.flipY ? -1 : 1) / finalSy);
+    texture.offset.set(decal.flipX ? 1 : 0, decal.flipY ? 1 : 0);
 
     meshes.forEach((mesh) => {
       if (mesh.material instanceof THREE.MeshStandardMaterial) {
@@ -68,12 +122,14 @@ function WrapMaterial({ meshes, decal }: { meshes: THREE.Mesh[]; decal: DecalDat
     return () => {
       meshes.forEach((mesh) => {
         if (mesh.material instanceof THREE.MeshStandardMaterial) {
-          mesh.material.map = null;
-          mesh.material.needsUpdate = true;
+          if (mesh.material.map === texture) {
+            mesh.material.map = null;
+            mesh.material.needsUpdate = true;
+          }
         }
       });
     };
-  }, [texture, meshes, decal.scale, decal.scaleX, decal.scaleY]);
+  }, [texture, meshes, decal.scale, decal.scaleX, decal.scaleY, decal.aspectRatio, decal.flipX, decal.flipY]);
 
   return null;
 }
@@ -180,12 +236,14 @@ function ViewerModel({
   const activeModelUrl = MODELS[apparelModel] || tshirtManUrl;
   const { scene: gltfScene } = useGLTF(activeModelUrl);
   const [hydratedDecals, setHydratedDecals] = useState<DecalData[]>([]);
+  const hydrationVersionRef = useRef<number>(0);
 
   useEffect(() => {
+    const version = ++hydrationVersionRef.current;
     let isMounted = true;
 
     Promise.all(
-      decals.map(async (d) => {
+      decals.filter((d) => d.visible !== false).map(async (d) => {
         if (d.src?.startsWith('data:')) {
           return d;
         }
@@ -210,7 +268,7 @@ function ViewerModel({
         return d;
       }),
     ).then((hydrated) => {
-      if (isMounted) {
+      if (isMounted && version === hydrationVersionRef.current) {
         setHydratedDecals(hydrated);
       }
     });
@@ -242,7 +300,11 @@ function ViewerModel({
         clonedMesh.userData.isTargetMesh = true;
 
         if (child.material) {
-          clonedMesh.material = (child.material as THREE.Material).clone();
+          if (Array.isArray(child.material)) {
+            clonedMesh.material = child.material.map((m) => m.clone());
+          } else {
+            clonedMesh.material = child.material.clone();
+          }
         }
 
         group.add(clonedMesh);
@@ -251,6 +313,26 @@ function ViewerModel({
 
     return group;
   }, [gltfScene]);
+
+  // Safely dispose the explicitly cloned resources when the model swaps or unmounts
+  useEffect(() => {
+    return () => {
+      copiedScene.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          if (child.geometry) child.geometry.dispose();
+          if (child.material) {
+            if (Array.isArray(child.material)) {
+              child.material.forEach((m) => {
+                m.dispose();
+              });
+            } else {
+              child.material.dispose();
+            }
+          }
+        }
+      });
+    };
+  }, [copiedScene]);
 
   const targetMeshes = useMemo<THREE.Mesh[]>(() => {
     const meshes: THREE.Mesh[] = [];
@@ -267,8 +349,8 @@ function ViewerModel({
     targetMeshes.forEach((mesh) => {
       if (mesh.material instanceof THREE.MeshStandardMaterial) {
         mesh.material.color.set(color);
-        mesh.material.roughness = 0.9;
-        mesh.material.metalness = 0.05;
+        mesh.material.roughness = 0.7;
+        mesh.material.metalness = 0.0;
         mesh.material.needsUpdate = true;
       }
     });
@@ -284,7 +366,7 @@ function ViewerModel({
       <primitive object={copiedScene} />
       {wrapDecal && <WrapMaterial meshes={targetMeshes} decal={wrapDecal} />}
       {standardDecals.map((decal, index) => (
-        <DecalErrorBoundary key={decal.id || index}>
+        <DecalErrorBoundary key={decal.id || index} resetKey={`${decal.id}-${decal.src}`}>
           <Suspense fallback={null}>
             <ViewerDecal decal={decal} targetMeshes={targetMeshes} index={index} />
           </Suspense>
@@ -320,89 +402,111 @@ function SafeTextureDecal({
   targetMeshes: THREE.Mesh[];
   index: number;
 }) {
-  const { gl } = useThree();
+  // useTexture is cached globally; clone its sampler so this decal's flips never
+  // mutate another layer that happens to use the same source URL.
+  const cachedTexture = useTexture(src);
+  const texture = useMemo(() => cachedTexture.clone(), [cachedTexture]);
+  useEffect(() => {
+    texture.wrapS = decal.flipX ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
+    texture.wrapT = decal.flipY ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
+    texture.repeat.set(decal.flipX ? -1 : 1, decal.flipY ? -1 : 1);
+    texture.offset.set(decal.flipX ? 1 : 0, decal.flipY ? 1 : 0);
+    texture.needsUpdate = true;
+  }, [texture, decal.flipX, decal.flipY]);
+  useEffect(() => () => texture.dispose(), [texture]);
 
-  if (!gl.localClippingEnabled) {
-    gl.localClippingEnabled = true;
-  }
+  const position = new THREE.Vector3(
+    Number.isFinite(decal.position?.[0]) ? decal.position[0] : 0,
+    Number.isFinite(decal.position?.[1]) ? decal.position[1] : 0,
+    Number.isFinite(decal.position?.[2]) ? decal.position[2] : 0,
+  );
 
-  const texture = useTexture(src);
-  const position = new THREE.Vector3(...(decal.position || [0, 0, 0]));
+  const activeMesh = useMemo(() => {
+    return (
+      targetMeshes.find((m) => m.name === decal.meshName) ||
+      targetMeshes.find((m) => m.name.toLowerCase().includes('front')) ||
+      targetMeshes[0]
+    );
+  }, [targetMeshes, decal.meshName]);
 
-  const activeMesh =
-    targetMeshes.find((m) => m.name === decal.meshName) ||
-    targetMeshes.find((m) => m.name.toLowerCase().includes('front')) ||
-    targetMeshes[0];
+  const activeMeshRef = useMemo(
+    () => ({ current: activeMesh }) as React.RefObject<THREE.Mesh>,
+    [activeMesh],
+  );
+
+  const targetMeshRefs = useMemo(() => {
+    return targetMeshes.map((m) => ({ current: m }) as React.RefObject<THREE.Mesh>);
+  }, [targetMeshes]);
 
   const finalRotation = useMemo(() => {
     const dummy = new THREE.Object3D();
     dummy.rotation.set(
-      Number.isNaN(decal.rotation?.[0]) ? 0 : decal.rotation[0],
-      Number.isNaN(decal.rotation?.[1]) ? 0 : decal.rotation[1],
-      Number.isNaN(decal.rotation?.[2]) ? 0 : decal.rotation[2],
+      Number.isFinite(decal.rotation?.[0]) ? decal.rotation[0] : 0,
+      Number.isFinite(decal.rotation?.[1]) ? decal.rotation[1] : 0,
+      Number.isFinite(decal.rotation?.[2]) ? decal.rotation[2] : 0,
     );
-    if (decal.rotationOffset) dummy.rotateZ(decal.rotationOffset);
+    if (decal.rotationOffset && Number.isFinite(decal.rotationOffset)) {
+      dummy.rotateZ(decal.rotationOffset);
+    }
     return [dummy.rotation.x, dummy.rotation.y, dummy.rotation.z] as [number, number, number];
   }, [decal.rotation, decal.rotationOffset]);
 
-  const ratio = decal.aspectRatio || 1;
+  const aspect =
+    typeof decal.aspectRatio === 'number' && Number.isFinite(decal.aspectRatio)
+      ? Math.max(0.0001, decal.aspectRatio)
+      : 1;
+
   let sx = decal.scaleX ?? decal.scale;
   let sy = decal.scaleY ?? decal.scale;
 
   if (decal.scaleX === undefined && decal.scaleY === undefined) {
-    if (ratio > 1) {
-      sx = (decal.scale ?? 0.35) * ratio;
+    if (aspect > 1) {
+      sx = (decal.scale ?? 0.35) * aspect;
       sy = decal.scale ?? 0.35;
-    } else if (ratio < 1) {
+    } else if (aspect < 1) {
       sx = decal.scale ?? 0.35;
-      sy = (decal.scale ?? 0.35) / ratio;
+      sy = (decal.scale ?? 0.35) / aspect;
     } else {
       sx = decal.scale ?? 0.35;
       sy = decal.scale ?? 0.35;
     }
   }
 
-  const finalSx = Number(sx) || 0.35;
-  const finalSy = Number(sy) || 0.35;
+  const finalSx = typeof sx === 'number' && Number.isFinite(sx) && sx > 0 ? sx : 0.35;
+  const finalSy = typeof sy === 'number' && Number.isFinite(sy) && sy > 0 ? sy : 0.35;
 
   const isPassThrough = decal.placementMode === 'pass-through';
-  const isFront = decal.position ? decal.position[2] >= 0 : true;
 
-  const clipPlane = useMemo(() => {
-    if (isPassThrough) return null;
-    const isUnplaced =
-      decal?.position[0] === 0 && decal?.position[1] === 0 && decal?.position[2] === 0;
-    if (isUnplaced) return null;
+  const safeZDepth = Number.isFinite(Number(decal.zDepth))
+    ? Math.min(Math.max(Number(decal.zDepth), 0.01), 15)
+    : 0.12;
 
-    return new THREE.Plane(new THREE.Vector3(0, 0, isFront ? 1 : -1), 0.01);
-  }, [isPassThrough, isFront, decal?.position]);
-
-  const safeZDepth = Number.isNaN(Number(decal.zDepth))
-    ? 0.15
-    : Math.max(Number(decal.zDepth), 0.01);
-
-  const safeAngleLimit = Number.isNaN(Number(decal?.angleLimit))
-    ? (85 * Math.PI) / 180
-    : (Math.max(10, Math.min(90, Number(decal?.angleLimit))) * Math.PI) / 180;
+  const safeAngleLimit = Number.isFinite(Number(decal.angleLimit))
+    ? (Math.max(10, Math.min(90, Number(decal.angleLimit))) * Math.PI) / 180
+    : (65 * Math.PI) / 180;
 
   const uniformsRef = useRef({
     uProjectorDir: { value: new THREE.Vector3(0, 0, 1) },
     uAngleLimit: { value: Math.cos(safeAngleLimit) },
+    uPassThrough: { value: isPassThrough ? 1.0 : 0.0 },
   });
 
   useEffect(() => {
+    if (!activeMesh) return;
     uniformsRef.current.uAngleLimit.value = Math.cos(safeAngleLimit);
+    uniformsRef.current.uPassThrough.value = isPassThrough ? 1.0 : 0.0;
     const localDir = new THREE.Vector3(0, 0, 1).applyEuler(
       new THREE.Euler(finalRotation[0], finalRotation[1], finalRotation[2]),
     );
     const worldDir = localDir.transformDirection(activeMesh.matrixWorld).normalize();
     uniformsRef.current.uProjectorDir.value.copy(worldDir);
-  }, [safeAngleLimit, finalRotation, activeMesh]);
+  }, [safeAngleLimit, isPassThrough, finalRotation, activeMesh]);
 
   // biome-ignore lint/suspicious/noExplicitAny: Internal Three.js shader type varies by version
   const customOnBeforeCompile = useCallback((shader: any) => {
     shader.uniforms.uProjectorDir = uniformsRef.current.uProjectorDir;
     shader.uniforms.uAngleLimit = uniformsRef.current.uAngleLimit;
+    shader.uniforms.uPassThrough = uniformsRef.current.uPassThrough;
 
     shader.vertexShader = `
       varying vec3 vWorldNormalCustom;
@@ -410,77 +514,79 @@ function SafeTextureDecal({
     `.replace(
       `#include <beginnormal_vertex>`,
       `#include <beginnormal_vertex>
-       vWorldNormalCustom = normalize(mat3(modelMatrix) * objectNormal);
+       // Synchronized mathematically correct normal transform for non-uniform matrices
+       vWorldNormalCustom = normalize(mat3(transpose(inverse(modelMatrix))) * objectNormal);
       `,
     );
 
     shader.fragmentShader = `
       uniform vec3 uProjectorDir;
       uniform float uAngleLimit;
+      uniform float uPassThrough;
       varying vec3 vWorldNormalCustom;
       ${shader.fragmentShader}
     `.replace(
       `#include <alphatest_fragment>`,
       `#include <alphatest_fragment>
-       // FIX: Added abs() to dot product for pass-through visibility on opposite side
-       float dotP = abs(dot(normalize(vWorldNormalCustom), uProjectorDir));
-       if (dotP < uAngleLimit) {
-           discard;
+       float dotP = dot(normalize(vWorldNormalCustom), uProjectorDir);
+       if (uPassThrough < 0.5) {
+           if (dotP < uAngleLimit) {
+               discard;
+           }
+       } else {
+           if (abs(dotP) < uAngleLimit) {
+               discard;
+           }
        }
       `,
     );
   }, []);
 
   const scale = new THREE.Vector3(finalSx, finalSy, safeZDepth);
-  const blendMode = decal.blendMode === 'multiply' ? THREE.MultiplyBlending : THREE.NormalBlending;
+  const blendMode = getThreeBlending(decal.blendMode);
 
   const renderMaterial = () => (
     <meshStandardMaterial
-      key={`mat-${isPassThrough ? 'pass' : 'clip'}-${isFront ? 'front' : 'back'}`}
+      key={`mat-${isPassThrough ? 'pass' : 'clip'}`}
       map={texture}
       transparent
       polygonOffset
       polygonOffsetFactor={-1 - index * 0.5}
       depthTest={true}
       depthWrite={false}
-      roughness={0.9}
+      roughness={0.7}
       metalness={0.0}
       blending={blendMode}
-      clippingPlanes={clipPlane ? [clipPlane] : []}
       onBeforeCompile={customOnBeforeCompile}
     />
   );
 
   return (
     <>
-      {isPassThrough
-        ? targetMeshes.map((mesh) =>
-            createPortal(
-              <Decal
-                key={`decal-${decal.id}-${mesh.name}`}
-                mesh={{ current: mesh } as React.RefObject<THREE.Mesh>}
-                position={position}
-                rotation={finalRotation}
-                scale={scale}
-                renderOrder={index + 1}
-              >
-                {renderMaterial()}
-              </Decal>,
-              mesh,
-            ),
-          )
-        : createPortal(
-            <Decal
-              mesh={{ current: activeMesh } as React.RefObject<THREE.Mesh>}
-              position={position}
-              rotation={finalRotation}
-              scale={scale}
-              renderOrder={index + 1}
-            >
-              {renderMaterial()}
-            </Decal>,
-            activeMesh,
-          )}
+      {isPassThrough ? (
+        targetMeshes.map((mesh, i) => (
+          <Decal
+            key={`decal-${decal.id}-${mesh.name}`}
+            mesh={targetMeshRefs[i]}
+            position={position}
+            rotation={finalRotation}
+            scale={scale}
+            renderOrder={index + 1}
+          >
+            {renderMaterial()}
+          </Decal>
+        ))
+      ) : (
+        <Decal
+          mesh={activeMeshRef}
+          position={position}
+          rotation={finalRotation}
+          scale={scale}
+          renderOrder={index + 1}
+        >
+          {renderMaterial()}
+        </Decal>
+      )}
     </>
   );
 }

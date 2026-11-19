@@ -8,25 +8,106 @@ import {
   PenTool,
   Sun,
   X,
+  Undo2,
+  Redo2,
+  Trash2,
 } from 'lucide-react';
-import { type PointerEvent, useEffect, useRef, useState } from 'react';
+import { type PointerEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { applyBlur, applyBucketFill, applyBurn, applySaturate } from '@/shared/utils/brush-engine';
 import { Input, Label } from '@/ui/design-system';
-import { applyImageFilters, useEditorStore } from '@/ui/store/editor-store';
+import { useEditorStore } from '@/ui/store/editor-store';
 
 export type BrushType = 'pen' | 'brush' | 'eraser' | 'fill' | 'blur' | 'burn' | 'saturate';
 
 export function DrawingWorkspace() {
-  const { addTool, setDrawingMode, editingDrawingId, setEditingDrawingId, decals, updateDecal } =
+  const { addTool, setDrawingMode, editingDrawingId, setEditingDrawingId, decals, replaceDecalImage } =
     useEditorStore();
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const isDrawingRef = useRef(false);
+  const drawingPointerIdRef = useRef<number | null>(null);
 
   const [activeBrush, setActiveBrush] = useState<BrushType>('brush');
   const [brushColor, setBrushColor] = useState('#000000');
   const [brushSize, setBrushSize] = useState(12);
+  const historyRef = useRef<{ past: ImageData[]; future: ImageData[] }>({ past: [], future: [] });
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  const [isApplying, setIsApplying] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
+
+  const editingSource = editingDrawingId ? decals.find((d) => d.id === editingDrawingId)?.originalSrc ?? null : null;
+
+  const pushUndoSnapshot = () => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+    try {
+      const snapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      historyRef.current.past = [...historyRef.current.past.slice(-29), snapshot];
+      historyRef.current.future = [];
+      setCanUndo(true);
+      setCanRedo(false);
+    } catch (error) {
+      console.error('Could not save drawing history snapshot.', error);
+    }
+  };
+
+  const syncHistoryAvailability = useCallback(() => {
+    setCanUndo(historyRef.current.past.length > 0);
+    setCanRedo(historyRef.current.future.length > 0);
+  }, []);
+
+  const restoreSnapshot = useCallback((snapshot: ImageData) => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+    ctx.putImageData(snapshot, 0, 0);
+  }, []);
+
+  const undoDrawing = useCallback(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx || historyRef.current.past.length === 0) return;
+    const current = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    historyRef.current.future = [...historyRef.current.future, current];
+    const previous = historyRef.current.past.pop();
+    if (previous) restoreSnapshot(previous);
+    syncHistoryAvailability();
+  }, [restoreSnapshot, syncHistoryAvailability]);
+
+  const redoDrawing = useCallback(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx || historyRef.current.future.length === 0) return;
+    const current = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    historyRef.current.past = [...historyRef.current.past, current].slice(-30);
+    const next = historyRef.current.future.pop();
+    if (next) restoreSnapshot(next);
+    syncHistoryAvailability();
+  }, [restoreSnapshot, syncHistoryAvailability]);
+
+  const clearCanvas = () => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+    const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const hasPixels = new Uint32Array(image.data.buffer).some((pixel) => pixel !== 0);
+    if (!hasPixels) return;
+    pushUndoSnapshot();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  };
+
+  useEffect(() => {
+    const handleHistoryShortcut = (event: Event) => {
+      const action = (event as CustomEvent<{ action?: string }>).detail?.action;
+      if (action === 'undo') undoDrawing();
+      if (action === 'redo') redoDrawing();
+    };
+    window.addEventListener('caliqui:drawing-history', handleHistoryShortcut);
+    return () => window.removeEventListener('caliqui:drawing-history', handleHistoryShortcut);
+  }, [redoDrawing, undoDrawing]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -34,22 +115,46 @@ export function DrawingWorkspace() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, 512, 512);
+    let cancelled = false;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    historyRef.current = { past: [], future: [] };
+    setCanUndo(false);
+    setCanRedo(false);
 
-    if (editingDrawingId) {
-      const decal = decals.find((d) => d.id === editingDrawingId);
-      if (decal?.originalSrc) {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.src = decal.originalSrc;
-        img.onload = () => {
-          ctx.drawImage(img, 0, 0, 512, 512);
-        };
-      }
+    const resetBaseline = () => {
+      if (cancelled) return;
+      historyRef.current = { past: [], future: [] };
+      setCanUndo(false);
+      setCanRedo(false);
+    };
+
+    if (editingSource) {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        if (cancelled) return;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resetBaseline();
+      };
+      img.onerror = () => {
+        if (!cancelled) {
+          console.error('Failed to load drawing source for editing.');
+          resetBaseline();
+        }
+      };
+      img.src = editingSource;
+    } else {
+      resetBaseline();
     }
-  }, [editingDrawingId, decals]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [editingDrawingId, editingSource]);
 
   const startDrawing = (e: PointerEvent<HTMLCanvasElement>) => {
+    if (e.button !== 0 || drawingPointerIdRef.current !== null) return;
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
@@ -62,10 +167,17 @@ export function DrawingWorkspace() {
     const y = (e.clientY - rect.top) * scaleY;
 
     if (activeBrush === 'fill') {
+      pushUndoSnapshot();
       applyBucketFill(ctx, x, y, brushColor);
       return;
     }
 
+    e.preventDefault();
+    pushUndoSnapshot();
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {}
+    drawingPointerIdRef.current = e.pointerId;
     ctx.beginPath();
     ctx.moveTo(x, y);
     isDrawingRef.current = true;
@@ -97,7 +209,7 @@ export function DrawingWorkspace() {
   };
 
   const draw = (e: PointerEvent<HTMLCanvasElement>) => {
-    if (!isDrawingRef.current || activeBrush === 'fill') return;
+    if (!isDrawingRef.current || e.pointerId !== drawingPointerIdRef.current || activeBrush === 'fill') return;
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
@@ -144,48 +256,61 @@ export function DrawingWorkspace() {
     ctx.stroke();
   };
 
-  const stopDrawing = () => {
+  const stopDrawing = (e?: PointerEvent<HTMLCanvasElement>) => {
+    if (e && drawingPointerIdRef.current !== e.pointerId) return;
     isDrawingRef.current = false;
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (ctx) ctx.closePath();
+    if (canvas && e) {
+      try {
+        if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+      } catch {}
+    }
+    drawingPointerIdRef.current = null;
   };
+
+  useEffect(() => () => {
+    const pointerId = drawingPointerIdRef.current;
+    const canvas = canvasRef.current;
+    isDrawingRef.current = false;
+    drawingPointerIdRef.current = null;
+    if (pointerId !== null && canvas) {
+      try { if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId); } catch {}
+    }
+  }, []);
 
   const handleApply = async () => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || isApplying) return;
 
-    const dataUrl = canvas.toDataURL('image/png');
+    setApplyError(null);
+    setIsApplying(true);
+    try {
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('The drawing canvas is unavailable. Please reopen the drawing workspace.');
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+      const pixelBuffer = new Uint32Array(ctx.getImageData(0, 0, canvas.width, canvas.height).data.buffer);
+      const hasPixels = pixelBuffer.some((color) => color !== 0);
 
-    const pixelBuffer = new Uint32Array(ctx.getImageData(0, 0, 512, 512).data.buffer);
-    const hasPixels = pixelBuffer.some((color) => color !== 0);
-
-    if (editingDrawingId) {
-      const decal = decals.find((d) => d.id === editingDrawingId);
-      let finalSrc = dataUrl;
-      let finalAspectRatio = 1;
-
-      if (decal) {
-        // FIX: Destructure the new object payload from applyImageFilters
-        const result = await applyImageFilters({ ...decal, originalSrc: dataUrl });
-        finalSrc = result.src;
-        finalAspectRatio = result.aspectRatio;
+      if (editingDrawingId) {
+        const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+        if (!blob) throw new Error('The drawing could not be exported. Please try again.');
+        await replaceDecalImage(editingDrawingId, blob, 1);
+      } else if (hasPixels) {
+        addTool('drawing', canvas.toDataURL('image/png'));
+      } else {
+        throw new Error('Add a stroke or mark before applying the drawing.');
       }
 
-      updateDecal(editingDrawingId, {
-        src: finalSrc,
-        originalSrc: dataUrl,
-        aspectRatio: finalAspectRatio,
-      });
-    } else if (hasPixels) {
-      addTool('drawing', dataUrl);
+      setEditingDrawingId(null);
+      setDrawingMode(false);
+    } catch (error) {
+      console.error('Could not apply drawing.', error);
+      setApplyError(error instanceof Error ? error.message : 'Could not apply this drawing. Please try again.');
+    } finally {
+      setIsApplying(false);
     }
-
-    setEditingDrawingId(null);
-    setDrawingMode(false);
   };
 
   const handleCancel = () => {
@@ -194,34 +319,40 @@ export function DrawingWorkspace() {
   };
 
   return (
-    <div className="absolute inset-0 z-[200] bg-neutral-900/60 backdrop-blur-sm flex items-center justify-center animate-in fade-in duration-200">
-      <div className="bg-surface rounded-2xl shadow-2xl overflow-hidden border border-border flex flex-col">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-white">
+    <div className="studio-drawing-overlay absolute inset-0 z-[200] bg-neutral-900/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-200">
+      <div className="studio-drawing-window bg-surface rounded-2xl shadow-2xl overflow-hidden border border-border flex flex-col w-full max-w-5xl max-h-[calc(100dvh-1rem)]">
+        <div className="studio-drawing-header flex items-center justify-between px-4 py-3 border-b border-border bg-white">
           <div className="flex items-center gap-2">
             <span className="text-sm font-bold text-neutral-700 uppercase tracking-wider">
               {editingDrawingId ? 'Edit Drawing' : '2D Raster Overlay'}
             </span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            <button type="button" title="Undo drawing" aria-label="Undo drawing" disabled={!canUndo} onClick={undoDrawing} className="rounded-lg border border-stone-200 px-2.5 py-2 text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"><Undo2 size={15} /></button>
+            <button type="button" title="Redo drawing" aria-label="Redo drawing" disabled={!canRedo} onClick={redoDrawing} className="rounded-lg border border-stone-200 px-2.5 py-2 text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"><Redo2 size={15} /></button>
+            <button type="button" title="Clear drawing" aria-label="Clear drawing" onClick={clearCanvas} className="rounded-lg border border-stone-200 px-2.5 py-2 text-neutral-600 hover:bg-red-50 hover:text-red-600"><Trash2 size={15} /></button>
             <button
               type="button"
               onClick={handleCancel}
-              className="px-3 py-1.5 text-xs font-bold text-neutral-500 hover:bg-neutral-100 rounded-md transition-colors flex items-center gap-1.5"
+              disabled={isApplying}
+              className="px-3 py-1.5 text-xs font-bold text-neutral-500 hover:bg-neutral-100 rounded-md transition-colors flex items-center gap-1.5 disabled:opacity-50"
             >
               <X size={14} /> Cancel
             </button>
             <button
               type="button"
-              onClick={handleApply}
-              className="px-3 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors flex items-center gap-1.5 shadow-sm"
+              onClick={() => void handleApply()}
+              disabled={isApplying}
+              className="px-3 py-1.5 text-xs font-bold studio-primary-action rounded-md transition-colors flex items-center gap-1.5 shadow-sm disabled:opacity-60 disabled:cursor-wait"
             >
-              <Check size={14} /> {editingDrawingId ? 'Save Changes' : 'Apply Drawing'}
+              <Check size={14} /> {isApplying ? 'Saving…' : editingDrawingId ? 'Save Changes' : 'Apply Drawing'}
             </button>
           </div>
         </div>
 
-        <div className="flex bg-neutral-100 p-6 gap-6">
-          <div className="w-48 space-y-6 bg-white p-4 rounded-xl border border-border shadow-sm">
+        {applyError && <div role="alert" className="mx-3 mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-700">{applyError}</div>}
+        <div className="studio-drawing-body flex flex-col-reverse lg:flex-row bg-neutral-100 p-3 sm:p-6 gap-3 sm:gap-6 overflow-y-auto min-h-0">
+          <div className="studio-drawing-sidebar w-full lg:w-48 shrink-0 space-y-4 sm:space-y-6 bg-white p-3 sm:p-4 rounded-xl border border-border shadow-sm">
             <div className="space-y-2">
               <Label className="text-xs uppercase font-bold text-neutral-400">Brushes</Label>
               <div className="grid grid-cols-3 gap-1">
@@ -237,8 +368,8 @@ export function DrawingWorkspace() {
                     onClick={() => setActiveBrush(tool.id as BrushType)}
                     className={`p-2 rounded-lg flex items-center justify-center transition-all ${
                       activeBrush === tool.id
-                        ? 'bg-blue-100 text-blue-600 border border-blue-200'
-                        : 'text-neutral-500 hover:bg-neutral-50 border border-transparent'
+                        ? 'studio-option-active border'
+                        : 'studio-option-inactive border border-transparent'
                     }`}
                   >
                     {tool.icon}
@@ -264,10 +395,10 @@ export function DrawingWorkspace() {
                     className={`p-2 rounded-lg flex items-center justify-center gap-1.5 transition-all ${
                       activeBrush === tool.id
                         ? 'bg-purple-100 text-purple-600 border border-purple-200'
-                        : 'text-neutral-500 hover:bg-neutral-50 border border-transparent'
+                        : 'studio-option-inactive border border-transparent'
                     }`}
                   >
-                    {tool.icon} <span className="text-[10px] font-semibold">{tool.label}</span>
+                    {tool.icon} <span className="text-[11px] font-semibold">{tool.label}</span>
                   </button>
                 ))}
               </div>
@@ -284,7 +415,7 @@ export function DrawingWorkspace() {
                   max="100"
                   value={brushSize}
                   onChange={(e) => setBrushSize(Number(e.target.value))}
-                  className="w-full accent-blue-600"
+                  className="w-full studio-range-accent"
                 />
               </div>
 
@@ -321,7 +452,7 @@ export function DrawingWorkspace() {
           </div>
 
           <div
-            className="relative border border-border shadow-sm rounded-lg overflow-hidden bg-white w-[512px] h-[512px] shrink-0"
+            className="studio-drawing-canvas relative border border-border shadow-sm rounded-lg overflow-hidden bg-white w-full max-w-[512px] aspect-square h-auto shrink-0 mx-auto"
             style={{
               backgroundImage:
                 'repeating-linear-gradient(45deg, #f0f0f0 25%, transparent 25%, transparent 75%, #f0f0f0 75%, #f0f0f0), repeating-linear-gradient(45deg, #f0f0f0 25%, #ffffff 25%, #ffffff 75%, #f0f0f0 75%, #f0f0f0)',
@@ -336,8 +467,9 @@ export function DrawingWorkspace() {
               onPointerDown={startDrawing}
               onPointerMove={draw}
               onPointerUp={stopDrawing}
-              onPointerLeave={stopDrawing}
-              className={`w-full h-full ${
+              onPointerCancel={stopDrawing}
+              onLostPointerCapture={stopDrawing}
+              className={`w-full h-full touch-none ${
                 activeBrush === 'eraser'
                   ? 'cursor-crosshair'
                   : activeBrush === 'fill'
